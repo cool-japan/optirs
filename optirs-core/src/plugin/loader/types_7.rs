@@ -530,7 +530,7 @@ impl SecurityManager {
     ///
     /// # Errors
     ///
-    /// Propagates [`CodeScanner::scan_code`], which refuses to report a clean
+    /// Propagates `CodeScanner::scan_code`, which refuses to report a clean
     /// result when it has no rules or signatures to check against.
     pub fn scan_file(&self, path: &Path) -> Result<SecurityFileScanResult> {
         let threats = self.code_scanner.scan_code(path)?;

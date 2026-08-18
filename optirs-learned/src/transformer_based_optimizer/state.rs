@@ -89,7 +89,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     /// (`model_dimension` elements), which is applied identically to every
     /// transformer-layer segment of the (`model_dimension *
     /// num_transformer_layers`)-sized parameter vector. See
-    /// [`Self::project_update`].
+    /// `Self::project_update`.
     pub fn update_with_step(&mut self, update: &Array1<T>, loss: Option<T>) -> Result<()> {
         let projected = Self::project_update(update, self.current_parameters.len())?;
         let update = &projected;

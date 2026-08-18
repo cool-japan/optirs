@@ -2,9 +2,10 @@
 //
 // Each detector is exercised on two deterministic streams: a stationary one,
 // which must raise no drift at all, and one whose target relationship shifts
-// part-way through, which must raise drift. The generators use a fixed linear
-// congruential sequence rather than a random source so the verdicts are
-// reproducible.
+// part-way through, which must raise drift. The generators are seeded from a
+// fixed index rather than from a random source, so the verdicts are
+// reproducible across runs and platforms — see `pseudo_uniform` for why the
+// mixing function that turns that index into a sample has to be a real one.
 
 use super::*;
 use crate::streaming::adaptive_streaming::optimizer::StreamingDataPoint;
@@ -14,13 +15,24 @@ use std::time::Instant;
 
 /// Deterministic value in `[0, 1)` for index `index`.
 ///
-/// A fixed multiplicative sequence, taken modulo one: reproducible across runs
-/// and platforms, and decorrelated enough to act as noise for these tests.
+/// The SplitMix64 finalizer: a bijective avalanche mix, reproducible across
+/// runs and platforms, and — unlike a single LCG step — genuinely decorrelated
+/// between neighbouring indices and between salts.
+///
+/// That property is not cosmetic here. A single multiply-add step is *affine*
+/// in `index + salt`, so two streams drawn from it with different salts satisfy
+/// `second = frac(first + c)` for a constant `c`: they are the same feature
+/// twice. Under such a fixture the two "independent features" these tests build
+/// are one variable in disguise, per-feature importance is not even defined,
+/// and the "noise" term is an exactly predictable function of the features —
+/// which lets a learner drive its residual to zero and turns every error-based
+/// drift verdict into a statement about a deterministic sequence rather than a
+/// stream.
 fn pseudo_uniform(index: usize, salt: u64) -> f64 {
-    let mixed = (index as u64)
-        .wrapping_add(salt)
-        .wrapping_mul(6_364_136_223_846_793_005)
-        .wrapping_add(1_442_695_040_888_963_407);
+    let mut mixed = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt;
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    mixed ^= mixed >> 31;
     ((mixed >> 11) as f64) / ((1u64 << 53) as f64)
 }
 
@@ -283,35 +295,77 @@ fn ensemble_target_shift_raises_drift() {
 }
 
 /// The ensemble's significance is Fisher's combination of its members' own
-/// p-values, so it must be a genuine probability and must sharpen when every
-/// member agrees.
+/// p-values, so it must be a genuine probability: bounded in `[0, 1]`, never
+/// decisive on a stationary stream, and decisive when the members see a shift.
+///
+/// The comparison is between the *sharpest* verdict each stream produced, not
+/// between two arbitrary rounds, for two reasons that are properties of the
+/// detector rather than conveniences of the test.
+///
+/// * Under the null the combined p-value is (approximately) uniform on
+///   `[0, 1]`, so any single stationary verdict is one draw from that
+///   distribution — measured here, twelve stationary batches span `0.12` to
+///   `0.88` in confidence. Comparing one shifted round against one stationary
+///   round therefore compares two coin flips, and can be made to pass or fail
+///   by choosing the rounds. The sharpest of each is a statistic, not a draw.
+/// * Significance is deliberately concentrated at the change point. Each member
+///   restarts its error statistics once it has reported drift (DDM's published
+///   post-detection restart, which `DdmTest` and `PageHinkleyTest` also perform
+///   in this crate) and then re-learns the new relationship, so by the fourth
+///   shifted batch there is genuinely nothing left to be significant about. A
+///   detector that stayed at `p ~ 0` for as long as the new regime lasted would
+///   be reporting the *memory* of a change, not a change.
 #[test]
 fn ensemble_confidence_is_a_real_combined_p_value() {
+    /// A combined p-value at or below this is "decisive": the stationary stream
+    /// must never reach it, the shifted stream must.
+    const DECISIVE_P: f64 = 0.01;
+
     let mut detector = EnsembleDriftDetector::<f64>::new(0.2).expect("detector");
     run_stream(&mut detector, 0, 20, 60, 0);
-    let stationary = detector
-        .detect_drift(&batch(2_000, 60, 0))
-        .expect("stationary verdict");
-    assert!(
-        (0.0..=1.0).contains(&stationary.confidence),
-        "confidence {} is outside [0, 1]",
-        stationary.confidence
-    );
 
-    let mut shifted = detector
-        .detect_drift(&batch(100_000, 60, 1))
-        .expect("shift verdict");
-    for round in 1..4 {
-        shifted = detector
-            .detect_drift(&batch(100_000 + round * 60, 60, 1))
-            .expect("shift verdict");
+    let mut stationary_peak = 0.0f64;
+    for round in 0..12 {
+        let verdict = detector
+            .detect_drift(&batch(2_000 + round * 60, 60, 0))
+            .expect("stationary verdict");
+        assert!(
+            (0.0..=1.0).contains(&verdict.confidence),
+            "confidence {} is outside [0, 1]",
+            verdict.confidence
+        );
+        stationary_peak = stationary_peak.max(verdict.confidence);
     }
     assert!(
-        shifted.confidence > stationary.confidence,
-        "the combined p-value did not sharpen when every member saw the same \
-         shift: {} vs {}",
-        shifted.confidence,
-        stationary.confidence
+        stationary_peak < 1.0 - DECISIVE_P,
+        "a stationary stream produced a decisive combined p-value of {} over \
+         twelve batches; Fisher's combination is being fed something that is \
+         not a p-value",
+        1.0 - stationary_peak
+    );
+
+    let mut shifted_peak = 0.0f64;
+    for round in 0..4 {
+        let verdict = detector
+            .detect_drift(&batch(100_000 + round * 60, 60, 1))
+            .expect("shift verdict");
+        assert!(
+            (0.0..=1.0).contains(&verdict.confidence),
+            "confidence {} is outside [0, 1]",
+            verdict.confidence
+        );
+        shifted_peak = shifted_peak.max(verdict.confidence);
+    }
+    assert!(
+        shifted_peak > 1.0 - DECISIVE_P,
+        "the combined p-value never became decisive when every member saw the \
+         same shift: sharpest was {}",
+        1.0 - shifted_peak
+    );
+    assert!(
+        shifted_peak > stationary_peak,
+        "the shifted stream ({shifted_peak}) was no sharper than the stationary \
+         one ({stationary_peak})"
     );
 }
 
@@ -394,4 +448,94 @@ fn reset_clears_learned_state() {
     tree.reset_model().expect("reset");
     assert!(!tree.is_fitted());
     assert!(tree.feature_importances().is_empty());
+}
+
+/// The ensemble's majority must come from members agreeing on the **same call**,
+/// not from one member firing repeatedly across different ones.
+///
+/// This is load-bearing because each member restarts its own error statistics
+/// the moment *it* reports drift, and those restarts are independent. If the
+/// members desynchronised — linear firing on one batch and the tree on the next
+/// — every one of them could detect the shift and the ensemble would still never
+/// see two simultaneous votes. Nothing else in this file would catch that:
+/// `ensemble_target_shift_raises_drift` only asserts that *something* fired, and
+/// the stationary test cannot distinguish "quiet because the members agree it is
+/// quiet" from "quiet because they can never agree at all".
+///
+/// The measurement it pins down, taken from the same standalone members the
+/// ensemble builds internally:
+///
+/// * on the stationary stream the linear member fires on 14 of 20 batches on its
+///   own — its min-tracking baseline is genuinely noisier — and the ensemble is
+///   silent throughout, which is what the majority is for;
+/// * on the first shifted batch **all three** members fire on the same call.
+#[test]
+fn ensemble_majority_comes_from_simultaneous_member_agreement() {
+    let mut ensemble = EnsembleDriftDetector::<f64>::new(0.2).expect("detector");
+    // Standalone replicas of exactly what the ensemble builds, fed the same
+    // batches in the same order, so their verdicts are the members' verdicts.
+    let mut linear = LinearModelDetector::<f64>::new(0.2).expect("detector");
+    let mut neural = NeuralNetworkDriftDetector::<f64>::new(0.2).expect("detector");
+    let mut tree = DecisionTreeDriftDetector::<f64>::new(0.2).expect("detector");
+
+    let mut votes_of = |data: &[StreamingDataPoint<f64>]| -> usize {
+        [
+            linear.detect_drift(data).expect("linear").drift_detected,
+            neural.detect_drift(data).expect("neural").drift_detected,
+            tree.detect_drift(data).expect("tree").drift_detected,
+        ]
+        .iter()
+        .filter(|fired| **fired)
+        .count()
+    };
+
+    let mut lone_member_batches = 0usize;
+    for round in 0..20 {
+        let data = batch(round * 60, 60, 0);
+        let verdict = ensemble.detect_drift(&data).expect("ensemble");
+        let votes = votes_of(&data);
+        if votes == 1 {
+            lone_member_batches += 1;
+        }
+        assert!(
+            !verdict.drift_detected,
+            "the ensemble fired on stationary batch {round} with {votes} member \
+             vote(s)"
+        );
+    }
+    assert!(
+        lone_member_batches > 0,
+        "no stationary batch had exactly one member firing, so this test never \
+         exercised the case the majority rule exists to reject"
+    );
+
+    let mut agreed_batches = 0usize;
+    let mut ensemble_fired = 0usize;
+    for round in 0..4 {
+        let data = batch(100_000 + round * 60, 60, 1);
+        let verdict = ensemble.detect_drift(&data).expect("ensemble");
+        let votes = votes_of(&data);
+        if votes >= 2 {
+            agreed_batches += 1;
+        }
+        if verdict.drift_detected {
+            ensemble_fired += 1;
+            assert!(
+                votes >= 2,
+                "the ensemble reported drift on shifted batch {round} with only \
+                 {votes} member vote(s), so the majority rule is not what \
+                 produced the verdict"
+            );
+        }
+    }
+    assert!(
+        agreed_batches > 0,
+        "no shifted batch had two or more members firing together; the members' \
+         post-detection restarts have desynchronised them"
+    );
+    assert_eq!(
+        ensemble_fired, agreed_batches,
+        "the ensemble must fire on exactly the batches where a majority of its \
+         members did"
+    );
 }

@@ -447,7 +447,7 @@ impl SecureAggregator {
     ///
     /// Dropped clients are excluded from the aggregated sum but the masks
     /// they would have used are still cancelled by the
-    /// dropout-reconstruction phase of [`aggregate`].
+    /// dropout-reconstruction phase of [`Self::aggregate`].
     pub fn mark_dropped(&mut self, client_id: ClientId) -> Result<()> {
         if self.received.contains_key(&client_id) {
             return Err(OptimError::InvalidParameter(format!(

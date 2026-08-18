@@ -1205,7 +1205,7 @@ pub mod adaptive {
     /// This reports the process-wide total of bytes currently tracked by
     /// every [`super::gradient_checkpointing::MemoryTracker`] divided by the
     /// real system-memory budget (see
-    /// [`super::total_system_memory_bytes`]). It replaces the previous
+    /// `super::total_system_memory_bytes`). It replaces the previous
     /// hardcoded `0.5` placeholder: the numerator is the actual sum of
     /// tracked tensor bytes, so the value now moves with real allocations
     /// instead of being a fabricated constant.

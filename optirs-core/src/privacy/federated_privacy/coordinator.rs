@@ -479,7 +479,7 @@ impl<
     ///   protocol. This function refuses.
     /// * otherwise: the cohort mean is released **with differential privacy
     ///   noise**, charged to the moments accountant. See
-    ///   [`Self::simple_aggregate`].
+    ///   `Self::simple_aggregate`.
     pub fn secure_aggregate_updates(
         &mut self,
         clientupdates: &HashMap<String, Array1<T>>,
@@ -975,7 +975,7 @@ impl<
 
     /// Get current privacy guarantees, computed from the real moments accountant.
     ///
-    /// Delegates to [`Self::get_global_privacy_budget`]. If the accountant cannot
+    /// Delegates to `Self::get_global_privacy_budget`. If the accountant cannot
     /// produce an analysis (e.g. an invalid configuration), this fails *closed* by
     /// reporting the budget as fully consumed rather than fabricating a small
     /// spend, so a caller can never read exhausted state as ample headroom.

@@ -1,23 +1,21 @@
 # OptiRS Learned TODO (v0.3.2)
 
-## Module Status: Production Ready
+## Module Status: Research-Grade (Pre-1.0)
 
-**Release Date**: 2026-03-27
-**Tests**: 143 tests passing (2 ignored)
-**Features**: LSTM optimizers, Transformer optimizers, Meta-learning
-**SciRS2 Compliance**: 100%
+**Tests**: 565 tests (library + integration, `cargo nextest run -p optirs-learned
+--all-features`) + 3 doc tests, all passing
+**Feature flags**: `transformer`, `lstm`, `meta_learning` (all on by default; each genuinely
+gates its modules - see `src/lib.rs`)
+**SciRS2 Compliance**: 100% (no direct `ndarray`/`rand` dependency; see `Cargo.toml`)
 
 ---
 
 ## Completed: SciRS2 Integration
 
-- [x] **Full SciRS2-Core Integration** - 100% complete
-- [x] **ML Pipeline Foundation** - Built on scirs2_core::ml_pipeline
-- [x] **Neural Architecture Search** - Using scirs2_core::neural_architecture_search
-- [x] **Memory Efficient Operations** - scirs2_core::memory_efficient::LazyArray for history
-- [x] **JIT Compilation** - scirs2_core::jit for optimized transformer kernels
+- [x] **Full SciRS2-Core Integration** - 100% complete, no direct `ndarray`/`rand` dependency
 - [x] **Array Operations** - All neural operations use scirs2_core::ndarray
 - [x] **Random Generation** - scirs2_core::random for all stochastic operations
+- [x] **Numeric Traits** - scirs2_core::numeric (`Float`, `NumCast`) throughout
 
 ---
 
@@ -40,10 +38,8 @@
 - [x] Memory-efficient attention implementation
 
 ### LSTM Optimizers
-- [x] Vanilla LSTM for parameter update rules
-- [x] GRU alternative for computational efficiency
-- [x] Bidirectional variants for global context
-- [x] Forget gate analysis and tuning
+- [x] Vanilla LSTM for parameter update rules, with layer normalization (`LayerNormalization`)
+- [x] Forget/input/output gate state tracking (`StateStatistics`)
 - [x] Hidden state initialization strategies
 - [x] Gradient clipping for stability
 
@@ -65,11 +61,13 @@
 - [x] Warmup and cooldown strategy learning
 
 ### Training Infrastructure
-- [x] Distributed meta-training foundation
+- [ ] Distributed meta-training (not yet implemented; noted as a v1.1.0+ item in
+  `transformer_based_optimizer/attention.rs`)
 - [x] Efficient task sampling and batching
 - [x] Gradient accumulation for large meta-batches
-- [x] Mixed precision training support
-- [x] Checkpointing and resumption
+- [ ] Mixed precision training support (not yet implemented)
+- [x] Checkpointing and resumption (`transformer_based_optimizer::state` checkpoint manager,
+  `gradient_checkpointing` config)
 
 ### Evaluation Framework
 - [x] Convergence speed metrics
@@ -121,22 +119,24 @@
 
 ### Test Count
 ```
-143 tests passing
-2 intentionally ignored (hardware-specific)
+565 tests passing (library + integration, cargo nextest run -p optirs-learned --all-features)
+3 doc tests passing
 ```
+Re-measure with the commands above before quoting a count elsewhere - hardcoded numbers go
+stale quickly.
 
 ---
 
-## Performance Achievements
+## Status Summary
 
-- Learned optimizer framework operational
-- Meta-learning pipeline complete
-- Transformer and LSTM optimizers working
-- Production-ready evaluation metrics
+- Learned optimizer framework operational (Transformer, LSTM, GNN, NTM)
+- Meta-learning pipeline (MAML, Reptile, Meta-SGD) implemented and tested
+- Evaluation metrics (AUC, accuracy, confidence, convergence speed, ...) are computed from
+  real per-run measurements, not hardcoded constants
 - Wave 2: Few-shot learning, episodic memory, online MAML, cross-domain transfer
 
 ---
 
-**Status**: ✅ Production Ready
+**Status**: Research-grade - APIs may still change between 0.x releases; benchmark against
+`optirs-core`'s hand-designed optimizers before depending on a learned one in production
 **Version**: v0.3.2
-**Release Date**: 2026-03-27

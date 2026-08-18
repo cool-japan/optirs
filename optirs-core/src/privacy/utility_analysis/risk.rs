@@ -60,7 +60,7 @@ impl<T: Float + Debug + Send + Sync + 'static> PrivacyUtilityAnalyzer<T> {
     ///
     /// * [`RiskCategory::MembershipInference`] and
     ///   [`RiskCategory::AttributeInference`]:
-    ///   [`binary_inference_advantage_bound`], derived from the DP definition.
+    ///   `binary_inference_advantage_bound`, derived from the DP definition.
     /// * [`RiskCategory::ReIdentification`]: the composed `delta`, i.e. an
     ///   upper bound on the probability that the epsilon guarantee fails.
     ///

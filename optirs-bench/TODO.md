@@ -2,43 +2,13 @@
 
 ## Module Status: Production Ready
 
-**Release Date**: 2026-03-27
-**Tests**: 205 tests passing (2 ignored)
+**Not yet released**: this branch is pre-`0.3.2`; the last published version is `0.3.1`.
+**Tests**: 458 tests passing, 2 skipped (`cargo nextest run -p optirs-bench --all-features`)
 **Features**: Statistical benchmarking, Memory profiling, Regression detection
-**SciRS2 Compliance**: 100%
-
----
-
-## Completed: 100% Compilation Success
-
-### Error Resolution Summary
-- **Before**: 180+ compilation errors across 50+ files
-- **After**: 0 compilation errors
-- **Success Rate**: 100% error resolution achieved
-
-### Major Fixes Completed
-- [x] SciRS2 random number generation patterns
-- [x] Serde serialization (50+ types now fully serializable)
-- [x] CloudProvider type system compatibility
-- [x] Default implementations for all configs
-- [x] Type system fixes throughout
-- [x] Error handling standardization
-- [x] Field name consistency
-- [x] Borrow checker issues resolved
-- [x] Closure lifetime issues fixed
-- [x] Database reference lifetime management
-
----
-
-## Completed: SciRS2 Integration
-
-- [x] **Full SciRS2-Core Integration** - 100% complete
-- [x] **Benchmarking Framework** - Built on scirs2_core::benchmarking::BenchmarkSuite
-- [x] **Performance Profiling** - Using scirs2_core::profiling::Profiler exclusively
-- [x] **Metrics Collection** - scirs2_core::metrics::MetricRegistry for tracking
-- [x] **Stability Analysis** - scirs2_core::stability for regression detection
-- [x] **Statistical Analysis** - scirs2_core::benchmarking::BenchmarkStatistics
-- [x] **Array Operations** - All benchmarking operations use scirs2_core::ndarray
+**SciRS2-Core usage**: array/numeric backend (`scirs2_core::ndarray`, `scirs2_core::numeric::Float`)
+throughout, per COOLJAPAN policy. The crate's benchmarking/profiling/metrics/regression
+logic itself is native to this crate, not a wrapper over a `scirs2_core::benchmarking`-style
+module (no such dependency is used).
 
 ---
 
@@ -60,11 +30,14 @@
 - [x] CPU utilization monitoring
 
 ### Command-Line Tools
-- [x] Optimizer comparison functionality
-- [x] Dataset-specific benchmark suites
-- [x] Hardware-specific optimization
-- [x] Output format options (JSON, CSV)
-- [x] Progress reporting
+- [x] Baseline-vs-candidate comparison (`optirs-bench analyze`, `OptimizerComparison`)
+- [x] Output format options across the 9 binaries (Markdown/plain-text/CSV in
+      `optirs-bench report`; JSON/YAML/HTML/Markdown in the security/leak-report tools)
+- [ ] Dataset-specific benchmark suites -- not implemented; `OptimizerBenchmark` only
+      ships the 3 built-in synthetic test functions (Quadratic, Rosenbrock, Sphere)
+- [ ] Hardware-specific optimization -- not implemented; see Resource Utilization above
+- [ ] Progress reporting during a run -- not implemented; results print only after
+      `run_benchmark` returns
 
 ### Regression Detection
 - [x] Statistical significance testing (t-test, Mann-Whitney U)
@@ -107,11 +80,6 @@
 - [x] GitLab CI integration
 - [x] Azure DevOps integration
 - [x] Custom webhook support
-
-### Data Storage
-- [x] Time-series database integration
-- [x] Data retention policies
-- [x] Data archiving strategies
 
 ---
 
@@ -161,9 +129,11 @@ These require external systems / UIs / OS profilers and are intentionally NOT au
 
 ### Test Count
 ```
-205 tests passing
-2 intentionally ignored (hardware-specific)
+458 tests passing
+2 skipped (hardware-specific)
 ```
+(`cargo nextest run -p optirs-bench --all-features`; re-measure rather than trusting this
+number as the crate grows -- it will go stale again.)
 
 ---
 
@@ -176,6 +146,5 @@ These require external systems / UIs / OS profilers and are intentionally NOT au
 
 ---
 
-**Status**: ✅ Production Ready
-**Version**: v0.3.2
-**Release Date**: 2026-03-27
+**Status**: Production Ready (quality bar); not yet published -- last released version is `0.3.1`
+**Version**: v0.3.2 (workspace version, unreleased)

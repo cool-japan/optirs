@@ -303,7 +303,7 @@ impl<A: Float + Send + Sync> AdaptiveTuner<A> {
     }
 
     /// Every measurement taken so far, oldest first, bounded to the most recent
-    /// [`MAX_TUNING_HISTORY`] entries.
+    /// `MAX_TUNING_HISTORY` entries.
     pub fn tuning_history(&self) -> &[TuningRecord<A>] {
         &self.tuning_history
     }

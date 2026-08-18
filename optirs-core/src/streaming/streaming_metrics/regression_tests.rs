@@ -326,6 +326,75 @@ fn aggregation_buckets_snapshots_and_reduces_them() {
     assert!(!buckets[0].series.contains_key("resource.cpu_utilization"));
 }
 
+/// M2: `RetentionPolicy::aggregated_retention` is configured per
+/// `AggregationPeriod` and was read by nobody, so a caller who asked for
+/// "keep minute buckets for two minutes" still received every bucket ever
+/// rolled up. It now evicts expired buckets.
+#[test]
+fn aggregated_retention_evicts_expired_buckets() {
+    let mut collector = collector_without_compression();
+    // Five minute-buckets, one sample each: 0..60, 60..120, ... 240..300.
+    for minute in 0..5u64 {
+        collector
+            .record_sample(sample_at(minute * 60, 1.0 + minute as f64, 0.5, 5))
+            .expect("record");
+    }
+
+    // The default policy keeps minute buckets for a day, so all five survive.
+    let all = collector
+        .get_aggregated_metrics(AggregationPeriod::Minute, at(0), at(300))
+        .expect("aggregation must succeed");
+    assert_eq!(all.len(), 5, "the default retention must keep every bucket");
+
+    // Two minutes of minute-resolution roll-up, anchored on the newest bucket
+    // (which ends at 300): everything ending at or before 180 is expired.
+    let mut aggregated_retention = RetentionPolicy::default().aggregated_retention;
+    aggregated_retention.insert(AggregationPeriod::Minute, 120);
+    collector.set_retention_policy(RetentionPolicy {
+        aggregated_retention,
+        ..RetentionPolicy::default()
+    });
+
+    let retained = collector
+        .get_aggregated_metrics(AggregationPeriod::Minute, at(0), at(300))
+        .expect("aggregation must succeed");
+    assert_eq!(
+        retained.len(),
+        2,
+        "a 120-second aggregated retention must leave two minute buckets, got \
+         {:?}",
+        retained
+            .iter()
+            .map(|bucket| bucket.period_start)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(retained[0].period_start, 180);
+    assert_eq!(retained[1].period_start, 240);
+    assert_eq!(retained[1].sample_count, 1);
+    let loss = retained[1]
+        .series
+        .get("performance.accuracy.current_loss")
+        .expect("the surviving bucket must still carry its series");
+    assert_eq!(loss.mean, Some(5.0));
+
+    // A period with no configured retention says nothing about how long that
+    // resolution is kept, so nothing is evicted for it.
+    let mut aggregated_retention = RetentionPolicy::default().aggregated_retention;
+    aggregated_retention.remove(&AggregationPeriod::Minute);
+    collector.set_retention_policy(RetentionPolicy {
+        aggregated_retention,
+        ..RetentionPolicy::default()
+    });
+    assert_eq!(
+        collector
+            .get_aggregated_metrics(AggregationPeriod::Minute, at(0), at(300))
+            .expect("aggregation must succeed")
+            .len(),
+        5,
+        "an unconfigured period must not be read as a zero retention"
+    );
+}
+
 #[test]
 fn aggregation_rejects_a_window_beyond_the_configured_maximum() {
     let mut collector = collector_without_compression();

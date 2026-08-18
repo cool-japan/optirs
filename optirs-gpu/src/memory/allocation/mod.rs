@@ -546,7 +546,7 @@ impl UnifiedAllocator {
     /// than deriving one from `buddy_threshold`/`slab_threshold`/
     /// `arena_threshold`/`enable_auto_routing` -- centralizing that
     /// decision here would change
-    /// [`crate::memory::GpuMemorySystem::choose_allocator`]'s tested
+    /// `GpuMemorySystem::choose_allocator`'s tested
     /// routing boundaries (its hardcoded 1 KiB / 1 MiB cutovers do not
     /// line up with this config's threshold values), which is a
     /// deliberate behavior decision left to that caller rather than one

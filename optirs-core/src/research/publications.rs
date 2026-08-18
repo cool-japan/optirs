@@ -960,7 +960,7 @@ impl Bibliography {
 
     /// Parse BibTeX content.
     ///
-    /// Delegates to [`crate::research::citations::parse_bibtex_entries`], a
+    /// Delegates to `crate::research::citations::parse_bibtex_entries`, a
     /// brace-depth-aware tokenizer that (unlike a line-oriented scanner)
     /// correctly captures field values spanning multiple physical lines and
     /// values containing nested braces.

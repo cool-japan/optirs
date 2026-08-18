@@ -7,7 +7,7 @@
 use super::config::*;
 use super::optimizer::{Adaptation, AdaptationType, StreamingDataPoint};
 
-use crate::utils::{scalar_or, try_scalar_str};
+use crate::utils::scalar_or;
 use scirs2_core::numeric::Float;
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};

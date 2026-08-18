@@ -133,8 +133,8 @@ impl ComprehensiveSecurityAuditor {
     }
 
     /// Run automated dependency scanning against the embedded, offline
-    /// RustSec advisory snapshot (see [`embedded_advisory_snapshot`]).
-    /// Delegates to [`scan_dependencies_offline`] so this and
+    /// RustSec advisory snapshot (see `embedded_advisory_snapshot`).
+    /// Delegates to `scan_dependencies_offline` so this and
     /// `DependencyScanner::scan_dependencies` (the method actually invoked
     /// by [`Self::audit_project`]) never diverge into two different
     /// implementations.

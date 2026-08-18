@@ -503,7 +503,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> PatternLibrary<
 /// any dimension the caller didn't set) with [`PriorityWeights`] via a
 /// weighted sum, mirroring the field layout of [`PriorityLevel`] directly.
 /// This is the concrete algorithm registered by default under
-/// `"weighted_sum"` in [`PriorityManager::new`].
+/// `"weighted_sum"` in [`super::PriorityManager::new`].
 #[derive(Debug, Clone, Default)]
 pub struct WeightedSumPriorityCalculator;
 impl WeightedSumPriorityCalculator {

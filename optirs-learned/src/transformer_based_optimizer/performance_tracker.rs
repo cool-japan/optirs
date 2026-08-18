@@ -1186,7 +1186,7 @@ impl ResourceMetricsCollection {
     /// Nothing inside this crate can measure process CPU time without an FFI
     /// dependency, so the *caller* supplies the sample. Before this existed
     /// `cpu_usage_history` had no writers at all, which made
-    /// [`Self::get_average_cpu_usage`] return `0.0` forever and let the
+    /// `get_average_cpu_usage` return `0.0` forever and let the
     /// performance report present that as a measurement of zero CPU use.
     ///
     /// Out-of-range and non-finite samples are ignored rather than recorded, so a

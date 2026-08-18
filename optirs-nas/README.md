@@ -45,14 +45,14 @@ rather than left as documentation that promised a build knob that did not exist.
 | Differentiable (DARTS) | [`search_strategies::differentiable`] | plus PC-DARTS-style and robust variants |
 | Neural predictor | [`search_strategies::neural_predictor`] | trained by real backpropagation; MC-dropout uncertainty |
 | Progressive search | [`search_strategies::progressive`] | staged complexity growth |
-| Multi-objective | [`multi_objective`] | NSGA-II and weighted-sum, exact hypervolume |
+| Multi-objective | [`multi_objective`] | NSGA-II, NSGA-III, MOEA/D and weighted-sum, exact hypervolume |
 | Hyperparameter search | [`hyperparameter`] | grid enumeration, TPE, GP-free surrogate, evolutionary |
 | Hardware cost models | [`hardware_cost`] | latency / memory / energy estimation |
 | Domain search spaces | [`domain_specific_nas`] | CV, NLP, TimeSeries, Reinforcement, Scientific |
 | Architecture embedding | [`architecture_embedding`] | vector-space similarity over architectures |
 | AutoML coordination | [`automl_pipeline`] | pipeline stages around a search |
 
-Multi-objective algorithms **other than** NSGA-II and weighted-sum (NSGA-III, MOEA/D, PAES,
+Multi-objective algorithms **other than** NSGA-II, NSGA-III, MOEA/D and weighted-sum (PAES,
 SPEA2, epsilon-constraint, goal programming) are *not* implemented. Configuring one returns
 `OptimError::NotImplemented` at engine construction instead of silently substituting NSGA-II or
 producing an empty Pareto front.
@@ -288,6 +288,9 @@ Techniques implemented here follow:
 - Zoph & Le, *Neural Architecture Search with Reinforcement Learning* (2017)
 - Liu et al., *DARTS: Differentiable Architecture Search* (2019)
 - Deb et al., *A Fast and Elitist Multiobjective Genetic Algorithm: NSGA-II* (2002)
+- Deb & Jain, *An Evolutionary Many-Objective Optimization Algorithm Using Reference-Point-Based
+  Nondominated Sorting Approach, Part I: NSGA-III* (2014)
+- Zhang & Li, *MOEA/D: A Multiobjective Evolutionary Algorithm Based on Decomposition* (2007)
 - Bergstra, Bardenet, Bengio & Kegl, *Algorithms for Hyper-Parameter Optimization* (2011) — TPE
 - While, Bradstreet & Barone, *A Fast Way of Calculating Exact Hypervolumes* (2012) — the exact
   slicing recursion

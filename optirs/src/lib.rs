@@ -1,7 +1,6 @@
 //! # OptiRS - Advanced ML Optimization Built on SciRS2
 //!
 //! **Version:** 0.3.2
-//! **Release Date:** 2026-08-17
 //!
 //! [![Crates.io](https://img.shields.io/crates/v/optirs.svg)](https://crates.io/crates/optirs)
 //! [![Documentation](https://docs.rs/optirs/badge.svg)](https://docs.rs/optirs)
@@ -17,7 +16,8 @@
 //!
 //! ## Sub-Crate Status (v0.3.2)
 //!
-//! - ✅ `optirs-core` - Stable, production-ready (19 optimizers, SIMD, parallel, metrics)
+//! - ✅ `optirs-core` - Stable, production-ready (optimizers, schedulers, regularizers,
+//!   SIMD and parallel paths, metrics)
 //! - ✅ `optirs-bench` - Available (benchmarking, profiling, regression detection)
 //! - 🚧 `optirs-gpu` - Real GPU compute path (Metal backend live end-to-end; WebGPU
 //!   kernels implemented but blocked on an upstream `scirs2-core` adapter-probe bug;
@@ -63,21 +63,26 @@
 //!
 //! ### Core Optimizers (`optirs-core`)
 //!
-//! 19 state-of-the-art optimizers with performance optimizations:
-//!
-//! - **First-Order**: SGD, Adam, AdamW, RMSprop, Adagrad, LAMB, LARS, Lion, RAdam, SAM
-//! - **SIMD-Accelerated**: SimdSGD (2-4x faster for large arrays)
-//! - **Sparse**: SparseAdam, GroupedAdam
-//! - **Wrapper**: Lookahead
-//! - **Second-Order**: L-BFGS, Newton
+//! - **First-Order**: SGD, Adam, AdamW, AdaDelta, AdaBound, Adagrad, RMSprop, LAMB,
+//!   LARS, Lion, RAdam, Ranger, SAM
+//! - **SIMD-Accelerated**: `SimdSGD`
+//! - **Sparse / grouped**: `SparseAdam`, `GroupedAdam`
+//! - **Meta-learning**: `MAML`, `MetaSGD`, `ReptileOptimizer`
+//! - **Wrapper**: `Lookahead`
+//! - **Second-Order** (`optirs_core::second_order`): L-BFGS, Newton, Newton-CG, K-FAC
+//! - **Distributed** (`optirs_core::distributed`): FedProx
 //!
 //! #### Performance Features
 //!
-//! - **SIMD Acceleration** - 2-4x speedup for large parameter arrays
-//! - **Parallel Processing** - 4-8x speedup for multiple parameter groups
-//! - **Memory-Efficient** - Gradient accumulation and chunked processing
-//! - **GPU Framework** - 10-50x potential speedup with GPU acceleration
-//! - **Production Metrics** - Real-time monitoring with minimal overhead
+//! - **SIMD** - vectorized optimizer steps through `scirs2_core::simd_ops`
+//! - **Parallel** - parameter groups distributed across cores through
+//!   `scirs2_core::parallel_ops`
+//! - **Memory-Efficient** - gradient accumulation and chunked processing
+//! - **GPU** - see the `optirs-gpu` status below for which backends are real
+//! - **Production Metrics** - per-step monitoring with gradient and parameter statistics
+//!
+//! Speedups are workload- and hardware-dependent; measure them with the Criterion
+//! benchmarks in `optirs-core/benches/` rather than assuming a headline figure.
 //!
 //! ### GPU Acceleration (`optirs-gpu`)
 //!
@@ -117,17 +122,21 @@
 //!
 //! ### Learned Optimizers (`optirs-learned`) [Research-Grade]
 //!
-//! - **Transformer-based**: Self-attention optimization
-//! - **LSTM**: Recurrent optimizer networks
-//! - **Meta-Learning**: Learning to optimize across tasks
-//! - **Few-Shot**: Rapid adaptation to new problems
+//! - **Transformer-based**: self-attention optimizer with a real backward pass
+//! - **LSTM**: recurrent optimizer networks trained by truncated BPTT, with seeded,
+//!   reproducible initialization
+//! - **Meta-Learning**: MAML, Reptile, Meta-SGD and online meta-learning across tasks
+//! - **Few-Shot**: prototypical networks, fast adaptation, episodic memory
+//! - **Continual Learning**: elastic weight consolidation, progressive networks
 //!
 //! ### Neural Architecture Search (`optirs-nas`) [Research-Grade]
 //!
-//! - **Search Strategies**: Bayesian, evolutionary, RL-based
-//! - **Multi-Objective**: Balance accuracy, efficiency, resources
-//! - **Progressive**: Gradually increasing complexity
-//! - **Hardware-Aware**: Optimization for specific targets
+//! - **Search Strategies**: random, evolutionary, reinforcement-learning, Bayesian and
+//!   differentiable (DARTS, PC-DARTS, RobustDARTS)
+//! - **Multi-Objective**: NSGA-II and MOEA/D with exact hypervolume
+//! - **Hyperparameter Search**: grid, TPE and a kernel-regression surrogate
+//! - **Progressive**: search with a gradually increasing complexity budget
+//! - **Hardware-Aware**: latency, memory and energy cost modelling
 //!
 //! ## Module Organization
 //!
@@ -230,24 +239,25 @@
 //!
 //! This ensures type safety, performance, and consistency across the ecosystem.
 //!
-//! ## Performance
+//! ## Project health
 //!
-//! - **2,998 unit/integration tests** + **110 doc tests** = **3,108 total tests**
-//!   workspace-wide, `--all-features` (`cargo nextest run` + `cargo test --doc`,
-//!   as of 2026-08-17): 3,098 passed, 14 skipped/ignored, 0 failed
-//! - `cargo check --workspace --all-features --all-targets` was clean as of the
-//!   same date (the workspace has other crates under active development
-//!   between releases; this crate's own `cargo check`/`clippy` are verified
-//!   clean on every change)
-//! - **Comprehensive benchmarks** - Using Criterion.rs
-//! - **Statistical analysis** - For reliable performance metrics
+//! Measured on the 0.3.2 release candidate with `--all-features`:
+//!
+//! - more than 4,200 unit and integration tests passing workspace-wide, plus the
+//!   doc tests
+//! - `cargo check` and `cargo clippy --workspace --all-targets` both at zero warnings,
+//!   with no blanket `allow` attributes anywhere
+//! - `cargo deny check bans` passes
+//!
+//! Reproduce with `cargo nextest run --workspace --all-features` and
+//! `cargo clippy --workspace --all-features --all-targets`.
 //!
 //! ## Documentation
 //!
 //! - **API Documentation**: [docs.rs/optirs](https://docs.rs/optirs)
-//! - **User Guide**: See `USAGE_GUIDE.md` (8000+ words)
-//! - **Examples**: See `examples/` directory
-//! - **README**: Comprehensive feature overview
+//! - **User Guide**: `USAGE_GUIDE.md` in the repository
+//! - **Examples**: the `examples/` directory of this crate
+//! - **Release notes**: `CHANGELOG.md` in the repository
 //!
 //! ## Contributing
 //!

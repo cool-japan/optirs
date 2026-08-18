@@ -1,4 +1,4 @@
-//! [`MetaTrainable`] implementation for [`GnnOptimizer`] (finding F75).
+//! [`crate::es_meta_training::MetaTrainable`] implementation for [`GnnOptimizer`] (finding F75).
 //!
 //! The generic evolution-strategies loop lives in [`crate::es_meta_training`],
 //! which also explains why ES rather than backpropagation. This file supplies the

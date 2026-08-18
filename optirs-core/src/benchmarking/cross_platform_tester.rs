@@ -153,33 +153,41 @@ impl CrossPlatformTester {
             op();
         }
 
-        // Timed iterations.
-        let mut durations: Vec<Duration> = Vec::with_capacity(config.iterations);
+        // Timed iterations, measured as ONE batch. Timing each iteration
+        // separately quantizes a sub-tick `op` to a zero `Duration` on coarse
+        // monotonic clocks, and the zeros used to sum to a zero total that was
+        // then reported as *infinite* throughput — a fabricated number that
+        // intermittently failed the finiteness test under scheduler jitter.
+        // (The per-iteration timeout check is inside the measured window; this
+        // helper benchmarks coarse workloads, not nanosecond kernels.)
+        let mut completed = 0usize;
+        let timed_start = Instant::now();
         for _ in 0..config.iterations {
             if overall_start.elapsed() > config.timeout {
                 return Err(OptimError::ExecutionError(format!(
                     "benchmark '{}' exceeded timeout {:?} after {} of {} iterations",
-                    test_name,
-                    config.timeout,
-                    durations.len(),
-                    config.iterations
+                    test_name, config.timeout, completed, config.iterations
                 )));
             }
-            let iter_start = Instant::now();
             op();
-            durations.push(iter_start.elapsed());
+            completed += 1;
         }
 
-        let total: Duration = durations.iter().sum();
-        let total_secs = total.as_secs_f64();
-        let (throughput, latency_ms) = if total_secs > 0.0 {
-            (
-                config.iterations as f64 / total_secs,
-                total_secs * 1000.0 / config.iterations as f64,
-            )
-        } else {
-            (f64::INFINITY, 0.0)
-        };
+        let total_secs = timed_start.elapsed().as_secs_f64();
+        if total_secs <= 0.0 {
+            // Faster than the clock can resolve: the honest answer is that no
+            // throughput was measured, not that it was infinite.
+            return Err(OptimError::ExecutionError(format!(
+                "benchmark '{}' completed {} iterations faster than the \
+                 monotonic clock can resolve; increase iterations or data_size \
+                 to get a measurable run",
+                test_name, completed
+            )));
+        }
+        let (throughput, latency_ms) = (
+            config.iterations as f64 / total_secs,
+            total_secs * 1000.0 / config.iterations as f64,
+        );
 
         Ok(PerformanceBaseline::new(target.clone())
             .with_throughput(throughput)
@@ -236,6 +244,14 @@ mod tests {
 
         let result = tester.run_benchmark(&PlatformTarget::CPU, "op", || {
             calls.fetch_add(1, Ordering::SeqCst);
+            // Measurable, optimization-proof work: a bare atomic increment can
+            // finish inside one tick of a coarse monotonic clock, which is the
+            // zero-total case run_benchmark now rejects as unmeasurable.
+            let mut acc = 0u64;
+            for i in 0..10_000u64 {
+                acc = acc.wrapping_add(std::hint::black_box(i));
+            }
+            std::hint::black_box(acc);
         });
 
         assert!(result.is_ok());

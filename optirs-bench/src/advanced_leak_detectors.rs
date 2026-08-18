@@ -849,7 +849,7 @@ pub struct MemorySample {
     /// an allocator hook that tracks cumulative bytes allocated, which
     /// this module does not install; `None` rather than a fabricated 0.0.
     /// The *net* growth rate is still available and real, via
-    /// [`MonitorState::current_growth_rate`].
+    /// `MonitorState::current_growth_rate`.
     pub allocation_rate: Option<f64>,
     /// Gross deallocation rate (bytes/sec). See `allocation_rate` for why
     /// this is `None` rather than fabricated.

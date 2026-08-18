@@ -1042,7 +1042,22 @@ pub mod advanced_drift_analysis {
         pub timestamp: Instant,
     }
 
-    /// Context-aware drift detection
+    /// Context-aware drift detection.
+    ///
+    /// Classifies each observation into a context and keeps a **private bank of
+    /// base detectors per context**, so a stream that alternates between
+    /// regimes does not look like drift to any of them. A single shared bank
+    /// cannot express that: every regime switch enters its accumulators as a
+    /// level change, so it reports drift for a stream that is perfectly
+    /// stationary *within* each context, and conversely a real change inside
+    /// one context is diluted by every observation belonging to the others.
+    ///
+    /// The banks are built by
+    /// `impls::build_detector_bank` from the same
+    /// [`DriftDetectorConfig`] the global bank uses, so a context detector is a
+    /// fresh instance of the configured detector rather than a different
+    /// algorithm. The classifier emits a fixed, small set of context ids, so
+    /// the map is bounded by construction.
     #[derive(Debug)]
     pub struct ContextAwareDriftDetector<A: Float + Send + Sync> {
         /// Contextual features
@@ -1053,6 +1068,15 @@ pub mod advanced_drift_analysis {
 
         /// Context transition matrix
         transition_matrix: HashMap<(String, String), A>,
+
+        /// Configuration every per-context bank is instantiated from.
+        detector_config: DriftDetectorConfig,
+
+        /// One private bank of base detectors per context id.
+        context_models: HashMap<String, Vec<Box<dyn DriftDetectorTrait<A>>>>,
+
+        /// Latest combined verdict of each context's own bank.
+        context_status: HashMap<String, DriftStatus>,
     }
 
     /// Contextual feature for drift detection
@@ -1314,11 +1338,21 @@ pub mod advanced_drift_analysis {
                 base_detectors,
                 pattern_analyzer: DriftPatternAnalyzer::new(config.window_size),
                 threshold_manager: AdaptiveThresholdManager::new(),
-                context_detector: ContextAwareDriftDetector::new(),
+                context_detector: ContextAwareDriftDetector::new(config.clone()),
                 impact_analyzer: DriftImpactAnalyzer::new(),
                 adaptation_selector: AdaptationStrategySelector::new(),
                 drift_database: DriftDatabase::new(),
             }
+        }
+
+        /// The context-aware detector, for the per-context verdicts.
+        ///
+        /// `detect_drift_advanced` reports one combined status for the stream;
+        /// this is how a caller reaches the verdict each context's *own*
+        /// detector bank reached from only that context's observations, plus
+        /// the observed context transitions.
+        pub fn context_detector(&self) -> &ContextAwareDriftDetector<A> {
+            &self.context_detector
         }
 
         /// Advanced drift detection with pattern analysis
@@ -1336,8 +1370,22 @@ pub mod advanced_drift_analysis {
                 .iter_mut()
                 .map(|detector| (detector.name().to_string(), detector.update(value)))
                 .collect();
-            let statuses: Vec<DriftStatus> =
+            let mut statuses: Vec<DriftStatus> =
                 base_results.iter().map(|(_, status)| *status).collect();
+
+            // Run the current context's *own* bank of detectors on the same
+            // observation. Their verdicts join the vote only once the stream has
+            // actually shown more than one context: with a single context the
+            // per-context bank has seen exactly the observations the global one
+            // has, so its verdict would be a duplicate of evidence already
+            // counted, not new evidence. From the second context onwards the two
+            // views genuinely differ — the global bank sees the regime switches,
+            // the context bank does not — and the difference is the whole point
+            // of keeping per-context state.
+            let context_statuses = self.context_detector.observe_in_context(value);
+            if self.context_detector.context_count() > 1 {
+                statuses.extend(context_statuses);
+            }
 
             // Analyze patterns over the rolling window (C4: the analyzer used to
             // be handed a one-element slice, so variance was always exactly 0

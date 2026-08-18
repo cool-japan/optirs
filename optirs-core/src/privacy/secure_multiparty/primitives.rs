@@ -76,7 +76,7 @@ pub struct SMPCSecurityGuarantees {
 /// Shamir `k`-of-`n` secret sharing over `F_p`, `p = 2^127 - 1`.
 ///
 /// Values of type `T` are mapped into the field by fixed-point quantisation with
-/// [`FIXED_POINT_BITS`] fractional bits, so reconstruction is exact in the field and
+/// [`super::helpers::FIXED_POINT_BITS`] fractional bits, so reconstruction is exact in the field and
 /// the only error is the documented quantisation error. Coefficients are sampled
 /// uniformly over the *whole* field from an OS-seeded CSPRNG, which is what makes
 /// fewer than `k` shares information-theoretically independent of the secret.
@@ -538,11 +538,11 @@ pub struct SMPCConfig {
     pub security_parameter: usize,
     /// Request homomorphic encryption.
     ///
-    /// No homomorphic backend exists; [`SMPCCoordinator::new`] rejects `true`.
+    /// No homomorphic backend exists; [`super::coordinator::SMPCCoordinator::new`] rejects `true`.
     pub enable_homomorphic: bool,
     /// Request zero-knowledge proofs.
     ///
-    /// No proof system exists; [`SMPCCoordinator::new`] rejects `true`.
+    /// No proof system exists; [`super::coordinator::SMPCCoordinator::new`] rejects `true`.
     pub enable_zk_proofs: bool,
     /// SMPC protocol variant. Only [`SMPCProtocol::FederatedSMPC`] is implemented.
     pub protocol_variant: SMPCProtocol,

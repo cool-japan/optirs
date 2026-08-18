@@ -90,7 +90,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + 'static + Send + S
     /// Two things were wrong here before (finding F64):
     ///
     /// 1. The limit was `sqrt(2 / (fan_in + fan_out))`, which is Glorot's target
-    ///    *standard deviation* for a normal draw. [`Self::initialize_weights`]
+    ///    *standard deviation* for a normal draw. `Self::initialize_weights`
     ///    samples `Uniform[-b, b]`, whose variance is `b² / 3`, so the projections
     ///    started with exactly one third of the intended variance.
     /// 2. The fan pair was `model_dimension + head_dimension`. All four

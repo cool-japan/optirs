@@ -2,7 +2,7 @@
 
 ## Module status
 
-**Tests**: 244 passing (`cargo nextest run --all-features`) + 2 passing doctests (`cargo test --doc --all-features`).
+**Tests**: 256 passing (`cargo nextest run --all-features`) + 2 passing doctests (`cargo test --doc --all-features`).
 **Compiler warnings**: none — `cargo check` is clean on default features, `--all-features`, `--no-default-features`, and each backend feature individually.
 **Clippy**: clean (`cargo clippy --all-features --all-targets`); the 2 `clippy::wrong_self_convention` lints on `to_gpu`/`to_cpu` from prior releases are resolved — see "Known minor items" below.
 **Real backends**: Metal (macOS, real MSL compute path), WebGPU (WGSL kernels shipped and compiler-verified, but currently unreachable through `scirs2-core` 0.6.5's adapter probe — see below).
@@ -25,7 +25,7 @@ This file describes what is actually implemented and tested, not an aspirational
 
 ## Done: single-device multi-GPU collective
 
-- [x] `multi_gpu::MultiGpuSync` compiles and dispatches a real `all_reduce_mean` kernel. Honest about its ceiling: `scirs2-core` 0.6.x exposes one device per context and no cross-device transport, so every strategy (ring/tree/hierarchical/pipeline) is real for `num_gpus == 1` and returns `GpuOptimError::UnsupportedOperation` for `num_gpus > 1` — never a silent no-op, never a kernel dispatch to an unregistered name (16 unit tests).
+- [x] `multi_gpu::MultiGpuSync` compiles and dispatches a real `all_reduce_mean` kernel. Honest about its ceiling: `scirs2-core` 0.6.x exposes one device per context and no cross-device transport, so every strategy (ring/tree/hierarchical/pipeline) is real for `num_gpus == 1` and returns `GpuOptimError::UnsupportedOperation` for `num_gpus > 1` — never a silent no-op, never a kernel dispatch to an unregistered name (17 unit tests).
 - [x] `compress_gradients` does real host-side top-*k* largest-magnitude selection (previously returned zeros unconditionally).
 - [x] Pipeline-parallel sync submits one real dispatch per chunk via `dispatch_no_wait` + one `gpu_sync` fence for the batch — genuine command-queue overlap — and covers the tail when the tensor length does not divide evenly by the configured depth.
 - [x] `synchronize_all` waits on a real device fence (`GpuContext::gpu_sync`), not a wall-clock guess.

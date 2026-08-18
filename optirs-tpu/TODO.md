@@ -2,9 +2,10 @@
 
 ## Module Status: Working CPU-reference implementation (no vendor TPU runtime)
 
-**Tests**: 171 tests passing (0 ignored); `cargo clippy --all-features --tests`
-and `cargo doc --all-features` are both clean except one pre-existing,
-unrelated test-only style note (no `unwrap`/`panic!` findings)
+**Tests**: 205 tests passing (0 ignored), plus 2 passing doctests (1 more
+`ignore`d, a partial `main`-body example) via `cargo test --doc --all-features`.
+`cargo clippy --all-features --all-targets` and `cargo doc --all-features
+--no-deps` are both clean (no `unwrap`/`panic!` findings in production code).
 **Scope**: coordination, checkpointing, and an XLA-shaped compiler pipeline, all
 running on a CPU reference executor. No Google Cloud TPU provisioning, no vendor
 XLA/TPU runtime linkage (proprietary, not distributable as pure Rust).
@@ -128,8 +129,11 @@ behavior:
       `TraceCollector::record_event`, wired into real measured timings via
       `XLABackend::compile_and_integrate` -> `ProfilingIntegration::
       record_compile_timings`), rather than always writing a hardcoded empty
-      body. Memory export stays honestly empty: nothing in this crate yet
-      bridges real TPU memory-allocation events into this profiler.
+      body. Memory export is bridged too: `TPUBackend::run_one_attempt` records
+      every real device-memory reservation and release into the same profiler
+      (`ProfilingIntegration::record_memory_allocation`/`record_memory_release`,
+      with a peak-occupancy snapshot taken while the reservation is held), so
+      the export is only empty when a program was compiled but never executed.
 - [x] `xla_compilation` (the legacy duplicate module) deleted; its one real
       usage, `ComputationId`, now lives in `xla::frontend::graph_capture`
       (the real, tested XLA pipeline) and is re-exported at both
@@ -153,7 +157,7 @@ behavior:
 ## Testing Status
 
 ```
-171 tests passing, 0 ignored (cargo nextest run -p optirs-tpu --all-features)
+205 tests passing, 0 ignored (cargo nextest run -p optirs-tpu --all-features)
 ```
 
 - [x] XLA compiler pipeline tests (graph capture, optimization passes, shape

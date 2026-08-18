@@ -20,19 +20,36 @@
 //! - **Cross-Platform Testing**: Validate optimizers across different hardware and OS
 //! - **Security Auditing**: Scan for security vulnerabilities and compliance issues
 //! - **CI/CD Integration**: Automated testing and reporting for continuous integration
-//! - **Visualization Tools**: Generate plots and reports for optimization analysis
+//! - **Visualization Tools**: Text-based visualizations (parameter heatmaps, state
+//!   summaries) plus structured [`visualization::VisualizationExport`] data for
+//!   feeding external plotting tools; this crate does not render image/HTML plots
+//!   itself
 //!
 //! ## Architecture
 //!
-//! The crate is organized into several main modules:
+//! The crate is organized into modules by concern (see the sidebar for the full list);
+//! the main ones are:
 //!
-//! - `benchmarking`: Core benchmarking functionality and test suites
-//! - `memory`: Memory profiling, leak detection, and optimization
-//! - `regression`: Performance regression detection and alerting
-//! - `security`: Security auditing and vulnerability scanning
-//! - `visualization`: Plotting and reporting tools
-//! - `ci_cd_automation`: Continuous integration and deployment automation
-//! - `cross_platform`: Cross-platform testing and validation
+//! - `mod_impl` (private; re-exported at the crate root): [`OptimizerBenchmark`],
+//!   [`GradientFlowAnalyzer`], and the [`visualization`] submodule -- the core
+//!   benchmarking and gradient-flow-analysis types.
+//! - [`report_templates`]: Markdown/plain-text/CSV report rendering.
+//! - [`regression_tester`], [`performance_regression_detector`]: statistical
+//!   regression detection.
+//! - [`memory_optimizer`], [`memory_leak_detector`], [`advanced_memory_leak_detector`],
+//!   [`advanced_leak_detectors`], [`enhanced_memory_monitor`], [`leak_tool_reports`]:
+//!   memory profiling, leak detection, and third-party leak-tool report parsing.
+//! - [`security_auditor`], [`comprehensive_security_auditor`]: security auditing and
+//!   vulnerability scanning.
+//! - [`ci_cd_automation`]: CI/CD platform configuration and automated test execution.
+//! - [`advanced_cross_platform_orchestrator`], [`cross_platform_tester`]:
+//!   cross-platform test orchestration.
+//! - [`cross_framework`]: PyTorch/TensorFlow comparison benchmarking.
+//! - [`anomaly_detection`], [`performance_forecast`], [`performance_pattern_recognition`],
+//!   [`performance_prediction`]: statistical analytics over benchmark history.
+//! - [`system_sampler`]: real process/system metrics via `sysinfo`.
+//! - [`notification_transport`]: alert delivery (curl/file/log transports).
+//! - [`documentation_analyzer`]: documentation-quality analysis for Rust projects.
 //!
 //! ## Usage
 //!

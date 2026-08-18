@@ -713,7 +713,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
     /// payload that had not shrunk at all.
     ///
     /// Quantization is lossy; the reconstruction error is bounded by `step / 2`
-    /// per element, which [`Self::max_reconstruction_error`] reports. A constant
+    /// per element, which [`CompressedData::max_reconstruction_error`] reports. A constant
     /// tensor (`max == min`) has `step = 0` and round-trips exactly.
     ///
     /// # Errors

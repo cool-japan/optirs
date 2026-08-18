@@ -31,6 +31,21 @@
 // ordinary noise, plus a significance gate scaled by how much this particular
 // stream's squared error actually varies.
 //
+// Two properties make that rule survive contact with a *self-adapting* model,
+// which is what all three of these detectors monitor:
+//
+// * the baseline is **Winsorised** (`BASELINE_CLIP_SIGMAS`). The slow mean and
+//   the spread the z test divides by are updated from a clipped deviation, so
+//   the reference cannot be redefined by the very change it exists to detect.
+//   Without it a single 100x jump multiplies the estimated spread by five
+//   orders of magnitude on the first observation of the drift, and the
+//   detector's own p-value climbs back through `0.05` while the error is still
+//   several times its baseline.
+// * once drift is reported the error statistics **restart**, which is DDM's
+//   published behaviour and what `DdmTest`/`PageHinkleyTest` already do in this
+//   crate. The learned model is kept; only the reference is retired with the
+//   concept it described.
+//
 // References
 // - Gama, Žliobaitė, Bifet, Pechenizkiy & Bouchachia, "A Survey on Concept
 //   Drift Adaptation", ACM Computing Surveys 2014 (prequential evaluation,
@@ -64,9 +79,22 @@ const ALPHA_SLOW: f64 = 0.01;
 /// exponentially-weighted mean above a threshold is *not* rare — successive
 /// values of the mean are ~90% correlated, so an excursion that happens at all
 /// typically lasts about one correlation length. Requiring five correlation
-/// lengths is what separates "the mean wandered" from "the level moved": after
-/// a genuine shift the fast mean stays above the lagging slow mean for
-/// hundreds of observations.
+/// lengths is what separates "the mean wandered" from "the level moved".
+///
+/// **This budget is only satisfiable because the baseline is Winsorised.** It is
+/// not a property of the fast/slow pair on its own: the models these detectors
+/// monitor re-adapt, so the excursion ends when either the model re-learns *or*
+/// the baseline climbs to meet the fast mean, whichever happens first. Measured
+/// with an unclipped baseline, a complete change of the target relationship
+/// produced a run of 41–49 observations before the slow mean overtook the fast
+/// one — just short of this constant, so the drift was missed. With the clip at
+/// [`BASELINE_CLIP_SIGMAS`] the same shift produces a run of 75+ and the verdict
+/// lands at observation 50.
+///
+/// The two constants therefore have to be tuned together: widening the clip
+/// lets the baseline climb faster and shortens the achievable run, and at
+/// `BASELINE_CLIP_SIGMAS = 6` the baseline overtakes the fast mean before this
+/// budget is met.
 const MIN_DRIFT_RUN: usize = 50;
 
 /// Significance the one-sided z test on the fast/slow gap must reach before
@@ -84,6 +112,48 @@ const DRIFT_SIGNIFICANCE: f64 = 0.05;
 /// has settled (its time constant is `1 / ALPHA_SLOW = 100` observations) and
 /// the model has left its initial learning transient.
 const WARMUP_OBSERVATIONS: usize = 200;
+
+/// Standard deviations at which the *baseline* update is Winsorised.
+///
+/// The baseline exists to say what the error level was **before** the change,
+/// so it must not absorb the change itself. Without this the detector blinds
+/// itself in a single step: the variance estimator is an EWMA of the squared
+/// deviation from the baseline, so one observation `k` standard deviations out
+/// multiplies the variance by roughly `ALPHA_SLOW * k^2`. A 100x jump in the
+/// squared error therefore inflates the estimated spread by five orders of
+/// magnitude *on the first observation of the drift*, which is exactly when the
+/// z test needs the pre-drift spread. Measured on the neural detector: the
+/// variance went from `1.0e-5` to `70` in one observation, and the p-value —
+/// `4e-5` on that first observation — climbed back above `0.05` twenty
+/// observations later while the error was still five times its baseline.
+///
+/// So the deviation that drives the slow mean and its spread is clipped to
+/// `+/- BASELINE_CLIP_SIGMAS` standard deviations, while the *fast* mean stays
+/// unclipped. That is the whole asymmetry the detector rests on: the fast mean
+/// must register the change, the baseline must not.
+///
+/// Four sigma is a deliberate choice rather than a round number. Winsorising
+/// biases the scale estimate downwards (the fixed point of
+/// `V = E[min(d^2, c^2 V)]` sits below `E[d^2]`), which makes the z test
+/// slightly liberal; a wider clip reduces that bias but also lets the baseline
+/// climb faster during a real excursion, since the baseline's per-observation
+/// step is `ALPHA_SLOW * c * sqrt(V)` and `V` itself then grows by a factor
+/// `1 + ALPHA_SLOW * (c^2 - 1)` per clipped observation. At `c = 4` the scale
+/// estimate settles around 85% of the true spread on a chi-square-like error
+/// distribution (a ~9% inflation of the z score, which the persistence rule
+/// absorbs), while the baseline needs well over [`MIN_DRIFT_RUN`] observations
+/// to climb far enough to end a genuine excursion. At `c = 6` the baseline
+/// overtakes the fast mean before the persistence rule is satisfied, and the
+/// drift is missed.
+const BASELINE_CLIP_SIGMAS: f64 = 4.0;
+
+/// Observations required before the Winsorising clip engages.
+///
+/// The clip radius is derived from the tracker's own spread estimate, so it can
+/// only be applied once that estimate describes something. Engaging it earlier
+/// would bootstrap the radius off the first one or two observations and could
+/// pin the baseline to whatever the stream happened to start at.
+const BASELINE_CLIP_WARMUP: usize = 30;
 
 /// Hidden units in the online MLP.
 const MLP_HIDDEN_UNITS: usize = 8;
@@ -108,6 +178,17 @@ const TREE_MIN_SAMPLES_LEAF: usize = 8;
 /// Converts a generic float into the element type, reporting an honest error.
 fn from_f64<A: Float>(value: f64) -> Result<A, String> {
     try_scalar_str::<A, _>(value)
+}
+
+/// Whether `value` is **not** strictly greater than `bound`.
+///
+/// A NaN on either side answers `true`: it is not greater, and every caller
+/// here wants a NaN to take the conservative branch (no split, no clip radius,
+/// no significance) rather than to propagate. Written through `partial_cmp`
+/// rather than as `!(value > bound)` so that the incomparable case is visible
+/// in the code instead of hiding inside a negated float comparison.
+fn is_not_above(value: f64, bound: f64) -> bool {
+    !matches!(value.partial_cmp(&bound), Some(std::cmp::Ordering::Greater))
 }
 
 /// Extracts a supervised `(features, target)` pair from a data point.
@@ -183,15 +264,23 @@ impl PrequentialErrorTracker {
     }
 
     /// Folds one squared prediction error into both means.
+    ///
+    /// The fast mean sees the observation as it is; the baseline and its spread
+    /// see it Winsorised to [`BASELINE_CLIP_SIGMAS`] standard deviations (see
+    /// that constant for why). `slow += ALPHA_SLOW * deviation` is algebraically
+    /// the same EWMA as `ALPHA_SLOW * x + (1 - ALPHA_SLOW) * slow`, written in
+    /// deviation form so the clip has somewhere to apply.
     fn observe(&mut self, squared_error: f64) {
         if !squared_error.is_finite() {
             return;
         }
         if self.fast.is_finite() && self.slow.is_finite() {
             let deviation = squared_error - self.slow;
-            self.variance = ALPHA_SLOW * deviation * deviation + (1.0 - ALPHA_SLOW) * self.variance;
+            let baseline_step = self.winsorise(deviation);
+            self.variance =
+                ALPHA_SLOW * baseline_step * baseline_step + (1.0 - ALPHA_SLOW) * self.variance;
             self.fast = ALPHA_FAST * squared_error + (1.0 - ALPHA_FAST) * self.fast;
-            self.slow = ALPHA_SLOW * squared_error + (1.0 - ALPHA_SLOW) * self.slow;
+            self.slow += ALPHA_SLOW * baseline_step;
         } else {
             self.fast = squared_error;
             self.slow = squared_error;
@@ -204,6 +293,35 @@ impl PrequentialErrorTracker {
         } else {
             self.run_length = 0;
         }
+    }
+
+    /// Clips a deviation from the baseline to [`BASELINE_CLIP_SIGMAS`] standard
+    /// deviations, once the spread estimate is old enough to define a radius.
+    ///
+    /// Two special cases:
+    ///
+    /// * Before [`BASELINE_CLIP_WARMUP`] observations there is no trustworthy
+    ///   radius yet, so the deviation passes through unchanged.
+    /// * A spread of *exactly* zero — a model whose prequential error has not
+    ///   varied at all, which a perfectly-fitting model on a noiseless stream
+    ///   really does produce — is a degenerate reference with no scale to clip
+    ///   against. An upward deviation is then held out entirely: it is the
+    ///   drift, and letting it in would define both the baseline level *and*
+    ///   the spread the z test divides by from the very change under test. (One
+    ///   such observation is enough to blind the detector: `ALPHA_SLOW * d^2`
+    ///   for `d = 152100` is a variance of `2.3e8`, against which the whole
+    ///   excursion then looks like ordinary noise.) A *downward* deviation is
+    ///   adopted in full: a model doing better than its reference is not drift,
+    ///   and adopting it is what re-establishes a usable scale.
+    fn winsorise(&self, deviation: f64) -> f64 {
+        if self.updates < BASELINE_CLIP_WARMUP {
+            return deviation;
+        }
+        if is_not_above(self.variance, 0.0) {
+            return deviation.min(0.0);
+        }
+        let radius = BASELINE_CLIP_SIGMAS * self.variance.sqrt();
+        deviation.clamp(-radius, radius)
     }
 
     /// Relative rise of the fast mean over the slow one, or `None` before the
@@ -233,12 +351,16 @@ impl PrequentialErrorTracker {
         };
         let effective_n = (2.0 - ALPHA_FAST) / ALPHA_FAST;
         let standard_error = (self.variance / effective_n).sqrt();
-        let z = if standard_error > 0.0 {
-            (fast - slow) / standard_error
-        } else {
-            0.0
-        };
-        stats::standard_normal_sf(z)
+        if is_not_above(standard_error, 0.0) {
+            // Degenerate reference: the baseline error had no spread at all.
+            // Under that null the error is a point mass, so *any* rise above it
+            // has probability zero and any other outcome is the null itself.
+            // Returning the mid-value `0.5` here (what `sf(0)` gives) would
+            // silently veto every verdict on such a stream, which is the
+            // opposite of what a zero-variance reference implies.
+            return Ok(if fast > slow { 0.0 } else { 1.0 });
+        }
+        stats::standard_normal_sf((fast - slow) / standard_error)
     }
 
     /// Whether enough observations have accumulated for a verdict.
@@ -314,7 +436,7 @@ impl SymmetryBreaker {
 
 /// Online multilayer perceptron drift detector.
 ///
-/// One hidden layer of [`MLP_HIDDEN_UNITS`] `tanh` units over the feature
+/// One hidden layer of `MLP_HIDDEN_UNITS` `tanh` units over the feature
 /// window, a linear output, and a stochastic-gradient step on the squared
 /// prediction error taken once per labelled point.
 ///
@@ -447,6 +569,34 @@ impl<A: Float + Send + Sync> NeuralNetworkDriftDetector<A> {
             .collect()
     }
 
+    /// Restarts the error statistics after a drift has been reported, leaving
+    /// the learned network in place.
+    ///
+    /// This is DDM's published post-detection restart, and the same restart
+    /// `DdmTest` and `PageHinkleyTest` perform in this crate: once the verdict
+    /// has been issued, the reference the verdict was measured against belongs
+    /// to the old concept and must not be carried into the new one. Without it
+    /// a baseline that (correctly) refused to absorb the drift would keep the
+    /// detector alarmed for as long as it took the fast mean to decay — several
+    /// thousand observations on a stream whose reference error was exactly
+    /// zero. The importance baseline is cleared with it, so the next concept is
+    /// compared against its own starting point rather than the previous one's.
+    ///
+    /// The cost is [`WARMUP_OBSERVATIONS`]: the detector issues no further
+    /// verdict until the restarted statistics have settled, so a second drift
+    /// arriving inside that window is not reported. Both halves of that
+    /// constant's justification survive a restart and neither can be shortened
+    /// here. The slow mean still needs its two time constants to settle (after
+    /// 100 observations 37% of its weight is still the single squared error it
+    /// was re-seeded from, after 200 it is 13%), and the model is *not* already
+    /// trained: a concept change puts it into a fresh learning transient, whose
+    /// legitimately elevated and noisy error is exactly what a shortened
+    /// warm-up would start testing against a half-formed baseline.
+    fn restart_after_detection(&mut self) {
+        self.tracker.reset();
+        self.baseline_sensitivity.clear();
+    }
+
     /// Scores the point, folds the observed error into the tracker, then takes
     /// one gradient step (prequential order).
     fn learn_one(&mut self, features: &[f64], target: f64) {
@@ -533,12 +683,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ModelBasedDetect
             feature_importance_changes.push(from_f64::<A>(current - baseline)?);
         }
 
-        Ok(ModelDriftResult {
-            drift_detected: self.tracker.drift_detected()?,
+        let drift_detected = self.tracker.drift_detected()?;
+        let result = ModelDriftResult {
+            drift_detected,
             performance_degradation: from_f64(degradation)?,
             confidence: from_f64((1.0 - p_value).clamp(0.0, 1.0))?,
             feature_importance_changes,
-        })
+        };
+        if drift_detected {
+            self.restart_after_detection();
+        }
+        Ok(result)
     }
 
     fn reset_model(&mut self) -> Result<(), String> {
@@ -600,7 +755,7 @@ impl TreeNode {
 /// Depth-limited CART regression tree over a sliding window of labelled
 /// observations.
 ///
-/// The tree is refit from the window every [`TREE_REFIT_INTERVAL`]
+/// The tree is refit from the window every `TREE_REFIT_INTERVAL`
 /// observations rather than grown incrementally — a periodically refit CART,
 /// not a Hoeffding tree. Each split is the `(feature, threshold)` pair that
 /// maximally *diverges* the two children's squared-error rates from the
@@ -680,7 +835,7 @@ impl<A: Float + Send + Sync> DecisionTreeDriftDetector<A> {
     /// admissible split reduces the squared error.
     fn best_split(&self, indices: &[usize], width: usize) -> Option<(usize, f64, f64)> {
         let parent_sse = self.subset_sse(indices);
-        if !(parent_sse > 0.0) {
+        if is_not_above(parent_sse, 0.0) {
             return None;
         }
         let (total_sum, total_squares) = self.subset_moments(indices);
@@ -710,7 +865,7 @@ impl<A: Float + Send + Sync> DecisionTreeDriftDetector<A> {
                 let next = self
                     .feature_value(order[position + 1], feature)
                     .unwrap_or(0.0);
-                if !(next > current) {
+                if is_not_above(next, current) {
                     // Identical feature values cannot be separated.
                     continue;
                 }
@@ -809,6 +964,19 @@ impl<A: Float + Send + Sync> DecisionTreeDriftDetector<A> {
         }
     }
 
+    /// Restarts the error statistics after a drift has been reported, leaving
+    /// the fitted tree and its window in place.
+    ///
+    /// See [`NeuralNetworkDriftDetector::restart_after_detection`] for why the
+    /// reference cannot outlive the concept it was measured on, and for the
+    /// [`WARMUP_OBSERVATIONS`] blind window the restart costs. The window is
+    /// deliberately *not* cleared: the tree is the model, and discarding the
+    /// model on every verdict would make the next verdict meaningless.
+    fn restart_after_detection(&mut self) {
+        self.tracker.reset();
+        self.baseline_importances.clear();
+    }
+
     /// Scores the point with the current tree, folds the error in, then adds
     /// it to the window (prequential order) and refits on schedule.
     fn learn_one(&mut self, features: Vec<f64>, target: f64) {
@@ -876,12 +1044,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> ModelBasedDetect
             feature_importance_changes.push(from_f64::<A>(current - baseline)?);
         }
 
-        Ok(ModelDriftResult {
-            drift_detected: self.tracker.drift_detected()?,
+        let drift_detected = self.tracker.drift_detected()?;
+        let result = ModelDriftResult {
+            drift_detected,
             performance_degradation: from_f64(degradation)?,
             confidence: from_f64((1.0 - p_value).clamp(0.0, 1.0))?,
             feature_importance_changes,
-        })
+        };
+        if drift_detected {
+            self.restart_after_detection();
+        }
+        Ok(result)
     }
 
     fn reset_model(&mut self) -> Result<(), String> {

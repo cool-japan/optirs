@@ -37,9 +37,12 @@
 //!   kernel on a single device; anything that would require moving data
 //!   between two physical GPUs returns
 //!   [`GpuOptimError::UnsupportedOperation`].
-//! * Literal NVIDIA tensor cores / `wmma`. [`tensor_cores`] provides a real
-//!   mixed-precision tiled GEMM on the wgpu path and reports honest errors for
-//!   the NVIDIA-only operations.
+//! * Literal NVIDIA tensor cores / `wmma`. [`tensor_cores`] provides real
+//!   CPU-side matrix-layout optimization, precision selection and AMP loss
+//!   scaling; the device GEMM entry points (`tensor_core_gemm`,
+//!   `fused_adam_tensor_core`, ...) report an honest
+//!   [`GpuOptimError::UnsupportedOperation`] because no backend this crate can
+//!   reach exposes NVIDIA tensor cores.
 //!
 //! ## Example
 //!

@@ -755,7 +755,7 @@ impl<
     /// the deterministic policy gradient needs `∇_a Q(s, a)`. A2C/A3C are
     /// normally on-policy but accept replayed transitions here too (their
     /// log-probs/values are recomputed from the current networks — see
-    /// [`ActorCriticOptimizer::experiences_to_trajectory`]). D4PG and MPO are
+    /// `ActorCriticOptimizer::experiences_to_trajectory`). D4PG and MPO are
     /// not yet implemented.
     pub fn update_from_replay(&mut self, batchsize: usize) -> Result<ActorCriticMetrics<T>> {
         if self.replay_buffer.len() < batchsize {

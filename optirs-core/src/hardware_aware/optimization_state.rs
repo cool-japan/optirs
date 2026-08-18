@@ -94,11 +94,11 @@ impl HardwareOptimizerKind {
     ///
     /// The rules are ordered from the hardest constraint to the softest:
     ///
-    /// 1. Offloading optimizer state to CPU memory, or a sub-[`LOW_POWER_BUDGET_WATTS`]
+    /// 1. Offloading optimizer state to CPU memory, or a sub-`LOW_POWER_BUDGET_WATTS`
     ///    power budget, makes every extra per-parameter buffer expensive: use SGD.
     /// 2. Any other edge device: use Lion, which halves Adam's state and whose
     ///    sign update tolerates quantized arithmetic.
-    /// 3. Batches of [`LARGE_BATCH_THRESHOLD`] or more (TPU, distributed): use LAMB.
+    /// 3. Batches of `LARGE_BATCH_THRESHOLD` or more (TPU, distributed): use LAMB.
     /// 4. Otherwise: Adam.
     pub fn recommend_for<A: Float>(
         platform: &HardwarePlatform,

@@ -16,7 +16,7 @@
 //! Meta-training a learned optimizer by gradients means differentiating through
 //! the unrolled inner optimization: `∂L_meta/∂w` has to flow back through
 //! `horizon` applications of
-//! [`AdvancedOptimizer::step`](crate::domain_optimizers::AdvancedOptimizer::step),
+//! [`AdvancedOptimizer::step`],
 //! each of which contains a recurrent cell, a nonlinear addressing or aggregation
 //! stage and a nonlinear readout. That is the truncated-BPTT machinery
 //! `lstm::bptt` (behind the `lstm` feature) implements for the LSTM controller,

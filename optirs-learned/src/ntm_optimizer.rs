@@ -41,7 +41,7 @@
 //!    bias-corrected EMA-smoothed gradient (the descent direction).
 //!
 //! The controller weights and the initial memory are initialised deterministically
-//! from a seed via [`scirs2_core::random`] and held fixed during
+//! from a seed via [`mod@scirs2_core::random`] and held fixed during
 //! [`AdvancedOptimizer::step`] (this is the genuine inference optimizer; the memory,
 //! addressing weights, read vector and gradient EMAs are persistent state that
 //! evolves across steps). Meta-training of the controller weights is available

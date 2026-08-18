@@ -1,11 +1,13 @@
 # OptiRS Core TODO (v0.3.2)
 
-## Module Status: Production Ready
+## Module Status: Pre-1.0 (0.3.x)
 
-**Release Date**: 2026-03-27
-**Tests**: 647 unit tests + doc tests passing (3 ignored)
-**Optimizers**: 21 fully implemented
-**SciRS2 Compliance**: 100%
+**Tests**: 2202 tests (library + integration, `cargo nextest run -p optirs-core --all-features`) +
+95 doc tests, all passing
+**Optimizers**: 26 total - 22 implement the `Optimizer` trait (`optirs_core::optimizers`); 4
+more live in `optirs_core::second_order` as a separate family (Newton and a second, independent
+L-BFGS implement `SecondOrderOptimizer`; NewtonCG and KFAC expose their own `step` API instead)
+**SciRS2 Compliance**: 100% (no direct `ndarray`/`rand`/`rayon` dependency; see `Cargo.toml`)
 
 ---
 
@@ -16,7 +18,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ## Completed: Core Optimizers
 
-### First-Order Optimizers (16 total)
+### First-Order Optimizers (17 total)
 - [x] **SGD** - Stochastic Gradient Descent
   - [x] Basic SGD with learning rate
   - [x] Classical momentum (Polyak)
@@ -26,7 +28,8 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] Gradient centralization option
 
 - [x] **SIMD SGD** - SIMD-accelerated SGD
-  - [x] 2-4x speedup on large arrays
+  - [x] Vectorized update path for large parameter arrays (`benches/simd_benchmarks.rs`
+    compares it against scalar SGD; no fixed speedup ratio is asserted)
   - [x] Automatic SIMD threshold detection
 
 - [x] **Adam** - Adaptive Moment Estimation
@@ -102,23 +105,38 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] Different hyperparameters per group
   - [x] Layer-wise configuration
 
-### Second-Order Methods (3 total)
-- [x] **L-BFGS** - Limited-memory BFGS
+### Second-Order / Quasi-Newton Methods (5 total)
+- [x] **L-BFGS** (`optimizers::LBFGS`, implements `Optimizer`) - Limited-memory BFGS
   - [x] Two-loop recursion algorithm
-  - [x] Line search with Wolfe conditions
+  - [x] Backtracking Armijo line search (`LBFGS::step_with_loss`) - enforces the sufficient-decrease
+    (`c1`) condition only; the stored `c2` curvature parameter is not enforced by the current
+    backtracking search (see the doc comment on `LBFGS::c2` in `optimizers/lbfgs.rs`), so this
+    is Armijo, not full Wolfe
   - [x] Memory-efficient history management
   - [x] Configurable memory size
 
-- [x] **L-BFGS Simple** - Simplified L-BFGS
-  - [x] Easier configuration
-  - [x] Good default parameters
+- [x] **SecondOrderLBFGS** (`second_order::LBFGS`, re-exported as `SecondOrderLBFGS`,
+  implements `SecondOrderOptimizer`) - a separate, simpler L-BFGS implementation from the one
+  above; no line search, fixed step scaled by the two-loop recursion direction
 
-- [x] **Newton-CG** - Newton Conjugate Gradient
+- [x] **Newton** (`second_order::Newton`, implements `SecondOrderOptimizer`) - Diagonal Newton
+  step
+  - [x] Uses `|h_ii|` floored at a configurable minimum curvature as the step denominator, so
+    the update stays a descent direction under negative or vanishing curvature
+
+- [x] **Newton-CG** (`second_order::NewtonCG`, own `step`/`step_with_loss` API - does not
+  implement `SecondOrderOptimizer`) - Newton Conjugate Gradient
   - [x] Conjugate gradient solver for Newton system
   - [x] O(n) memory using only Hessian-vector products
   - [x] Trust region control
   - [x] Negative curvature detection
   - [x] 7 comprehensive tests
+
+- [x] **K-FAC** (`second_order::KFAC`, own `step` API - does not implement
+  `SecondOrderOptimizer`) - Kronecker-Factored Approximate Curvature
+  - [x] Kronecker-factored Fisher information approximation, per-layer covariance matrices
+  - [x] Self-contained Gauss-Jordan matrix inverse with partial pivoting + Tikhonov damping
+    (`second_order/kfac/utils::general_matrix_inverse`)
 
 ---
 
@@ -147,27 +165,28 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
   - [x] NaN/Inf detection
   - [x] Mixed precision training support (FP16/BF16/FP32)
 
-### Learning Rate Scheduling
-- [x] Exponential decay
-- [x] Step decay
-- [x] Multi-step decay
-- [x] Cosine annealing with warm restarts
-- [x] Linear warmup strategies
-- [x] Polynomial decay
-- [x] Cyclical learning rates
-- [x] OneCycle scheduling
-- [x] ReduceLROnPlateau
+### Learning Rate Scheduling (`optirs_core::schedulers`)
+- [x] `ConstantScheduler`, `ExponentialDecay`, `LinearDecay`, `StepDecay`
+- [x] `CosineAnnealing`, `CosineAnnealingWarmRestarts`
+- [x] `LinearWarmupDecay`, `OneCycle`, `CyclicLR`
+- [x] `ReduceOnPlateau`
+- [x] `CurriculumScheduler`, `NoiseInjectionScheduler`
+- [x] `AttentionAwareScheduler`, `ViTLayerDecay`
+- [x] `CustomScheduler`, `CombinedScheduler`, `SchedulerBuilder` (compose schedules from closures)
+- [ ] Multi-step and polynomial decay - **not implemented**; no `MultiStepDecay` or
+  `PolynomialDecay` type exists in `schedulers/` (checked off in a previous revision of this
+  file without a matching implementation)
 
 ### Performance Optimization
 - [x] **SIMD Acceleration**
-  - [x] SIMD-optimized mathematical operations
-  - [x] Platform-specific optimizations
-  - [x] 2-4x speedup achieved
+  - [x] SIMD-optimized mathematical operations (`simd_optimizer`, `optimizers::SimdSGD`)
+  - [x] Platform-specific optimizations via `scirs2_core::simd_ops`
+  - [x] Measured by `benches/simd_benchmarks.rs` (no fixed speedup ratio committed to docs)
 
 - [x] **Parallel Processing**
-  - [x] Parallel gradient updates
+  - [x] Parallel gradient updates (`parallel_optimizer`, non-wasm32 targets)
   - [x] Thread-safe optimizer state management
-  - [x] 4-8x speedup achieved
+  - [x] Measured by `benches/parallel_benchmarks.rs` (no fixed speedup ratio committed to docs)
 
 ### Memory Efficiency
 - [x] In-place operations with mutation tracking
@@ -223,7 +242,7 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 ## Testing Status
 
 ### Coverage
-- [x] Unit tests for all 19 optimizers
+- [x] Unit tests across all 26 optimizer implementations
 - [x] Convergence tests (Rosenbrock, Himmelblau)
 - [x] Numerical stability tests
 - [x] Edge case handling tests
@@ -231,20 +250,11 @@ Build a state-of-the-art, production-ready optimization library for Rust that ri
 
 ### Test Count
 ```
-647 unit tests passing
-3 intentionally ignored (hardware-specific)
-Doc tests: All passing
+2202 tests passing (library + integration, cargo nextest run -p optirs-core --all-features)
+95 doc tests passing
 ```
-
----
-
-## Performance Metrics Achieved
-
-- SGD: < 10ns per parameter update
-- Adam: < 50ns per parameter update
-- Memory overhead: < 1.5x parameter size
-- Parallel efficiency: > 85% on multi-core
-- SIMD speedup: 2-4x on large arrays
+Re-measure with the commands above before quoting a count elsewhere - this crate's test suite
+grows quickly and a hardcoded number goes stale fast.
 
 ---
 
@@ -258,6 +268,5 @@ Doc tests: All passing
 
 ---
 
-**Status**: ✅ Production Ready
+**Status**: Pre-1.0 (0.3.x) - public API may still change between 0.x releases
 **Version**: v0.3.2
-**Release Date**: 2026-03-27

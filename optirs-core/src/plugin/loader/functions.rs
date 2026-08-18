@@ -2,11 +2,14 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
+#[cfg(feature = "crypto")]
 use crate::error::{OptimError, Result};
 #[allow(dead_code)]
 #[cfg(feature = "crypto")]
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+#[cfg(any(feature = "crypto", test))]
+use std::path::Path;
+use std::path::PathBuf;
 
 /// Compute the SHA-256 digest of a file's full contents. `crypto`-gated
 /// alongside the signature verification that consumes it.

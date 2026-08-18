@@ -1,7 +1,6 @@
 # OptiRS Usage Guide
 
-**Version:** 0.3.0
-**Status:** Stable Release - Production Ready
+**Version:** 0.3.2
 
 ## Table of Contents
 
@@ -24,8 +23,8 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-optirs-core = "0.3.0"
-scirs2-core = "0.3.0"  # Required - OptiRS foundation
+optirs-core = "0.3.2"
+scirs2-core = "0.6.5"  # Required - OptiRS foundation
 ```
 
 ### Your First Optimizer
@@ -58,14 +57,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Available Optimizers
 
-OptiRS provides 16 state-of-the-art optimizers:
+The list below covers the optimizers this guide uses. It is not the full roster — run
+`cargo doc --open -p optirs-core` and look at `optirs_core::optimizers`,
+`optirs_core::second_order` and `optirs_core::distributed` for everything that ships.
 
 #### First-Order Optimizers
 - **SGD** - Stochastic Gradient Descent (with momentum & weight decay)
+- **SimdSGD** - SIMD-accelerated SGD for `f32`/`f64`
 - **Adam** - Adaptive Moment Estimation
 - **AdamW** - Adam with decoupled weight decay
 - **RMSprop** - Root Mean Square Propagation
 - **Adagrad** - Adaptive Gradient Algorithm
+- **AdaDelta** - Adaptive learning rate without manual tuning
+- **AdaBound** - Adaptive gradient with dynamic bounds converging to SGD
 
 #### Advanced Optimizers
 - **LAMB** - Layer-wise Adaptive Moments for Batch training
@@ -73,14 +77,24 @@ OptiRS provides 16 state-of-the-art optimizers:
 - **Lion** - Evolved Sign Momentum
 - **Lookahead** - k steps forward, 1 step back
 - **RAdam** - Rectified Adam
+- **Ranger** - RAdam + Lookahead
 - **SAM** - Sharpness Aware Minimization
 - **SparseAdam** - Adam for sparse gradients
 - **GroupedAdam** - Adam for parameter groups
 
-#### Second-Order Optimizers
+#### Meta-Learning Optimizers
+- **MAML** - Model-Agnostic Meta-Learning (SecondOrder / FirstOrder / Reptile variants)
+- **MetaSGD** - Per-parameter learnable learning rates
+- **ReptileOptimizer** - First-order meta-learning
+
+#### Second-Order Optimizers (`optirs_core::second_order`)
 - **L-BFGS** - Limited-memory BFGS
 - **Newton** - Newton's method
+- **Newton-CG** - Newton Conjugate Gradient with trust region
 - **K-FAC** - Kronecker-Factored Approximate Curvature
+
+#### Distributed (`optirs_core::distributed`)
+- **FedProx** - Federated proximal optimizer
 
 ### SGD with Momentum
 
@@ -221,7 +235,13 @@ let dropped_params = dropout.apply(&params)?;
 
 ## Performance Optimization
 
-### SIMD Acceleration (2-4x Speedup)
+The three sections below describe *capabilities*, not measured speedups. How much any of
+them buys you depends on array size, element type, core count and hardware, so measure on
+your own workload — `optirs-core/benches/` ships Criterion targets for exactly this
+(`simd_benchmarks`, `parallel_benchmarks`, `memory_efficient_benchmarks`,
+`gpu_benchmarks`).
+
+### SIMD Acceleration
 
 ```rust
 use optirs_core::simd_optimizer::{SimdOptimizer, should_use_simd};
@@ -236,7 +256,7 @@ if should_use_simd::<f32>(params.len()) {
 }
 ```
 
-### Parallel Processing (4-8x Speedup)
+### Parallel Processing
 
 ```rust
 use optirs_core::parallel_optimizer::{ParallelOptimizer, parallel_step_array1};
@@ -287,7 +307,13 @@ let memory_needed = MemoryUsageEstimizer::adam(
 println!("Adam needs {} GB", memory_needed / 1_000_000_000);
 ```
 
-### GPU Acceleration (10-50x Speedup)
+### GPU Acceleration
+
+Check which backends are actually available before relying on this path. As of 0.3.2,
+Metal is the only backend that runs real optimizer kernels end to end; WebGPU is blocked
+on an upstream `scirs2-core` adapter-probe bug, OpenCL gets as far as context creation,
+and there is no CUDA or ROCm backend. `is_gpu_available()` tells you the truth at runtime,
+and cross-device collectives return an explicit error rather than a fabricated result.
 
 ```rust
 use optirs_core::gpu_optimizer::{GpuOptimizer, GpuConfig};
@@ -298,7 +324,7 @@ let adam = Adam::new(0.001);
 let config = GpuConfig {
     use_tensor_cores: true,
     use_mixed_precision: true,
-    preferred_backend: Some("cuda".to_string()),
+    preferred_backend: None, // auto-detect; or Some("metal".to_string())
     ..Default::default()
 };
 

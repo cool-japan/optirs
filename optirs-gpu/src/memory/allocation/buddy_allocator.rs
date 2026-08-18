@@ -81,7 +81,7 @@ impl BuddyBlock {
     /// The classic buddy-system XOR trick (`offset ^ size`) only identifies
     /// the true buddy when `offset` is measured relative to a base every
     /// block shares. `base_ptr` (the allocator's arena base, e.g.
-    /// [`BuddyAllocator::base_ptr`]) must be that shared base: XOR-ing the
+    /// `BuddyAllocator::base_ptr`) must be that shared base: XOR-ing the
     /// raw absolute pointer would only coincidentally find the real buddy,
     /// since a real heap allocation's address is not generally a multiple
     /// of the arena's total size.

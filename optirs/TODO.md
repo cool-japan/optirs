@@ -1,150 +1,52 @@
-# OptiRS Integration Crate TODO (v0.3.2)
+# `optirs` (integration crate) TODO
 
-## Module Status: Production Ready
+**Version:** 0.3.2
+**Last audited:** 2026-08-18
 
-**Release Date**: 2026-03-27
-**Purpose**: Main integration crate with feature gates
-**Role**: Unified API across all OptiRS components
+## What this crate is
 
----
+A facade. `src/lib.rs` is ~310 lines: a documentation header, feature-gated `pub use`
+aliases for the six OptiRS crates, and a `prelude` module that re-exports
+`optirs-core`'s optimizers, regularizers and schedulers.
 
-## Completed: Core Integration
+It deliberately holds no logic of its own. There is no unifying trait layer, no shared
+tensor abstraction and no builder API at this level — each sub-crate owns its own types,
+and this crate only gives them a single version number and one import root. Anything that
+looks like cross-crate API design belongs in `optirs-core` or the relevant sub-crate, not
+here.
 
-### Unified API
-- [x] Common trait definitions across all sub-crates
-- [x] Unified error handling and error types
-- [x] Consistent naming conventions and patterns
-- [x] Cross-crate type compatibility
-- [x] Feature-gated API organization
-- [x] Prelude module with commonly used items
+Consequently this crate has no unit tests. Its two doc-tested examples in `src/lib.rs` and
+its two runnable examples are its test surface.
 
-### Feature Gate Management
-- [x] Feature dependency resolution
-- [x] Conditional compilation coordination
-- [x] Feature compatibility matrix validation
-- [x] Default feature selection optimization
-- [x] Feature flag documentation
+## Current state
 
-### Public API Design
-- [x] Consistent method naming across optimizers
-- [x] Standardized configuration patterns
-- [x] Uniform async/sync API design
-- [x] Common tensor abstraction layer
-- [x] Consistent error propagation patterns
-- [x] Builder pattern implementation
+- Feature gates `core` (default), `gpu`, `tpu`, `learned`, `nas`, `bench`, `full` — all
+  wired and building.
+- The prelude covers `optirs-core` only. The extension crates are intentionally excluded:
+  their public names collide with `core` and with each other (`SparseAdam` exists in both
+  `optirs-core` and `optirs-gpu`; `OptimError`/`Result` in both `optirs-learned` and
+  `optirs-nas`), and a glob re-export of colliding names is unusable through the path that
+  introduced the ambiguity. The reasoning is recorded on the `prelude` module itself so it
+  is not "simplified" away later.
+- Examples: `examples/basic_optimization.rs`, `examples/scirs2_integration_demo.rs`.
+- `cargo check` / `cargo clippy -p optirs --all-features --all-targets`: 0 warnings.
+- `cargo doc -p optirs --all-features --no-deps`: 0 warnings.
 
-### Prelude Module
-- [x] Core optimizer re-exports
-- [x] Common traits and types
-- [x] Feature-gated conditional exports
-- [x] Utility function re-exports
+## Open work
 
----
+- **More examples.** Only two exist. Worth adding: a GPU example (`--features gpu`), a
+  learned-optimizer example, and a NAS example — each gated so the default build does not
+  require them. These have to be written against the real sub-crate APIs; the previous
+  versions of this file claimed a full "example gallery" that never existed.
+- **A feature-combination smoke test.** The prelude-collision reasoning above is enforced
+  only by a doc comment. A compile test that enables `gpu` + `learned` + `nas` together
+  and resolves `optirs::prelude::SparseAdam` would turn it into something CI can catch.
 
-## Completed: Documentation and Examples
+## Not planned here
 
-### Documentation
-- [x] Module-level documentation with overviews
-- [x] Function-level documentation with examples
-- [x] Feature flag documentation
-- [x] Integration examples between components
-- [x] Performance guidelines
-- [x] Migration guides
-
-### Example Gallery
-- [x] Basic optimization examples
-- [x] GPU acceleration examples
-- [x] TPU distributed training examples
-- [x] Learned optimizer examples
-- [x] NAS workflow examples
-- [x] Benchmarking examples
-- [x] Real-world application examples
-
----
-
-## Completed: Feature Flags
-
-### Available Features
-- [x] `core` - Core optimization (default)
-- [x] `gpu` - GPU acceleration
-- [x] `tpu` - TPU coordination
-- [x] `learned` - Learned optimizers
-- [x] `nas` - Neural Architecture Search
-- [x] `bench` - Benchmarking tools
-- [x] `full` - All features
-
----
-
-## Future Work (v0.3.1+)
-
-### Cross-Component Integration
-- [ ] GPU-TPU hybrid acceleration
-- [ ] Learned-NAS co-optimization
-- [ ] Joint architecture-optimizer search
-
-### Advanced Features
-- [ ] Optimizer composition enhancements
-- [ ] Sequential optimizer chaining
-- [ ] Parallel optimizer execution
-- [ ] Weighted optimizer combination
-
-### Memory Management
-- [ ] Cross-component memory pooling
-- [ ] Enhanced garbage collection
-- [ ] Memory-mapped parameter storage
-
-### Performance
-- [ ] Further LTO optimization
-- [ ] Binary size reduction
-- [ ] Compile-time improvements
-
-### Platform Support
-- [ ] WebAssembly improvements
-- [ ] Mobile optimization
-- [ ] Edge deployment
-
-### Research Integration
-- [ ] Quantum computing integration
-- [ ] Neuromorphic computing support
-
----
-
-## Integration Status
-
-### OptiRS Ecosystem
-- [x] OptiRS-Core integration (19 optimizers)
-- [x] OptiRS-GPU integration (4 backends)
-- [x] OptiRS-TPU integration
-- [x] OptiRS-Learned integration
-- [x] OptiRS-NAS integration
-- [x] OptiRS-Bench integration
-
-### External Compatibility
-- [x] SciRS2 ecosystem integration
-- [x] Standard Rust libraries
-- [ ] PyTorch tensor compatibility (future)
-- [ ] TensorFlow tensor integration (future)
-- [ ] ONNX model support (future)
-
----
-
-## Quality Status
-
-### Code Quality
-- [x] Static analysis clean (clippy)
-- [x] Code coverage measured
-- [x] Performance profiling integration
-- [x] Memory safety verified
-- [x] API stability
-
-### Testing
-- [x] Unit tests for all public APIs
-- [x] Integration tests across components
-- [x] Feature combination testing
-- [x] Performance regression tests
-
----
-
-**Status**: ✅ Production Ready
-**Version**: v0.3.2
-**Release Date**: 2026-03-27
+Cross-component work (GPU/TPU hybrid execution, learned-NAS co-optimization, joint
+architecture-optimizer search, cross-component memory pooling) is sub-crate work, not
+facade work. If it lands, it lands in the crate that owns the types; this crate would only
+gain a `pub use`. Framework interop (PyTorch/TensorFlow/ONNX tensor compatibility) is
+likewise out of scope: OptiRS operates on `scirs2_core::ndarray` arrays and expects the
+caller to bridge.

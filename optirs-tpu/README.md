@@ -49,10 +49,14 @@ doc comment (`cargo doc -p optirs-tpu --open`) for the current per-module status
   by design rather than fabricate a live migration).
 - Cloud provisioning, billing/spot-bidding, and multi-region orchestration are out of
   scope for this crate; it coordinates a pod you already have, it does not create one.
-- Real TPU memory-allocation events are not fed into
-  `xla::backend::profiling_integration`'s memory profiler (that would mean bridging into
-  the separate `tpu_backend` memory manager), so its memory export is honestly empty; the
-  same module's counter/trace export report real recorded compile-step timings.
+- `xla::backend::profiling_integration`'s memory export reflects real activity only once a
+  program has actually run: `TPUBackend::run_one_attempt` records every device-memory
+  reservation and release it makes into that same profiler
+  (`ProfilingIntegration::record_memory_allocation`/`record_memory_release`), including a
+  peak-occupancy snapshot taken while the reservation is still held. Compile a program
+  without executing it and the memory export is honestly empty — there is nothing to
+  report yet — while the counter/trace exports already carry real recorded compile-step
+  timings regardless.
 - Some deeper `pod_coordination` submodules are still mixed-maturity scaffolding — check
   the module's own doc comments.
 
@@ -62,7 +66,6 @@ doc comment (`cargo doc -p optirs-tpu --open`) for the current per-module status
 [dependencies]
 optirs-tpu = "0.3.2"
 optirs-core = "0.3.2"
-scirs2-core = "0.4"
 ```
 
 ## Usage

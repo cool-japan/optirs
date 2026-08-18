@@ -31,7 +31,7 @@
 //!
 //! The learned weights (feature encoder, message map, GRU weights
 //! `W_z, U_z, W_r, U_r, W_h, U_h`, and readout) are initialised deterministically
-//! from a seed via [`scirs2_core::random`] and held fixed during [`AdvancedOptimizer::step`]
+//! from a seed via [`mod@scirs2_core::random`] and held fixed during [`AdvancedOptimizer::step`]
 //! (this is the genuine forward / inference optimizer; the persistent per-node
 //! EMAs and GRU hidden vectors evolve across steps). The architecture is laid out
 //! so that meta-training operates purely through the flat weight-vector surface

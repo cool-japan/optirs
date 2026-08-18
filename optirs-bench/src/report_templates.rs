@@ -3,7 +3,7 @@
 //! This module renders the benchmark data types produced by the core
 //! benchmarking pipeline ([`BenchmarkReport`], [`OptimizerPerformance`],
 //! [`OptimizerComparison`], [`BenchmarkResult`] and
-//! [`VisualizationExport`](crate::visualization::VisualizationExport)) into
+//! [`VisualizationExport`]) into
 //! human- and machine-readable reports.
 //!
 //! Three output formats are supported:

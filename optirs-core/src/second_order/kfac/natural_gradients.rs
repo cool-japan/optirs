@@ -80,7 +80,7 @@ impl NaturalGradientCompute {
     /// Robust static matrix inverse.
     ///
     /// Routes through the shared Gauss-Jordan-with-partial-pivoting routine in
-    /// [`super::utils::general_matrix_inverse`], which applies K-FAC-style Tikhonov
+    /// `super::utils::general_matrix_inverse`, which applies K-FAC-style Tikhonov
     /// damping if the input is (near-)singular and returns an explicit error if the
     /// damped system is still singular. This replaces the old behavior that
     /// returned a regularized identity for `n > 3` (silently discarding the matrix).

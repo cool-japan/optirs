@@ -297,7 +297,7 @@ pub struct VulnerableDependency {
 /// Dependency scanner for vulnerability detection.
 ///
 /// `vuln_db_client`/`license_db`/`package_cache` fields from an earlier,
-/// stateful-online-lookup design were removed: [`scan_dependencies_offline`]
+/// stateful-online-lookup design were removed: `scan_dependencies_offline`
 /// (the real, working implementation `scan_dependencies` delegates to) is a
 /// pure function of a project path and this `config`, so those fields were
 /// never read by anything -- genuinely superseded scaffolding, not a feature
@@ -321,9 +321,9 @@ impl DependencyScanner {
 /// design were removed along with the `config` fields that only ever
 /// initialized them: nothing populates or reads a local cache, and fetching
 /// from `external_sources` would mean giving this offline-only scanner (see
-/// [`scan_dependencies_offline`]) a registry client, which is a real feature
+/// `scan_dependencies_offline`) a registry client, which is a real feature
 /// addition, not a mechanical wire-up. `auto_update` and `update_frequency`
-/// -- the two `VulnerabilityDatabaseConfig` fields [`Self::needs_update`]
+/// -- the two `VulnerabilityDatabaseConfig` fields `needs_update`
 /// can actually honor without that -- are kept.
 #[derive(Debug)]
 pub struct VulnerabilityDatabase {

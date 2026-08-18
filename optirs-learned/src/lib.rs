@@ -50,52 +50,64 @@
 //! - **Meta-SGD** - Learn learning rates and update rules
 //! - **Task Adaptation** - Rapid fine-tuning on new tasks
 //!
-//! ### Few-Shot Optimization
-//! - **Fast Adaptation** - Few-step convergence on new problems
-//! - **Transfer Learning** - Knowledge transfer across domains
-//! - **Online Learning** - Continuous adaptation during training
-//! - **Hypernetworks** - Generate optimizer parameters on-the-fly
+//! ### Few-Shot Optimization (`few_shot` module)
+//! - **PrototypicalNetwork** - Encode inputs into prototypes for rapid task identification
+//! - **FastAdaptationEngine** - Few-step adaptation with dynamic algorithm selection
+//! - **TaskSimilarityCalculator** / **EpisodicMemoryBank** - Find and reuse similar past tasks
+//! - **OnlineMAML** (`online_maml` module) - Continuous task-stream meta-learning with
+//!   staleness decay
 //!
-//! ## Example Usage (Future)
+//! ## Example Usage
 //!
-//! ```rust,ignore
-//! use optirs_learned::{TransformerOptimizer, MetaLearningConfig};
-//! use scirs2_core::ndarray::Array1;
+//! Requires the `transformer` feature (on by default). Parameters and gradients are keyed
+//! by name, one entry per tensor, matching how a real training loop hands over named
+//! layers rather than a single flat array.
 //!
-//! // Create transformer-based optimizer
-//! let config = MetaLearningConfig {
-//!     num_heads: 8,
-//!     hidden_dim: 256,
-//!     num_layers: 4,
-//! };
+//! ```rust,no_run
+//! use optirs_learned::transformer::{TransformerOptimizer, TransformerOptimizerConfig};
+//! use scirs2_core::ndarray::Array2;
+//! use std::collections::HashMap;
 //!
-//! let mut optimizer = TransformerOptimizer::new(config)?;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a transformer-based optimizer (default architecture)
+//! let config = TransformerOptimizerConfig::default();
+//! let mut optimizer = TransformerOptimizer::<f64>::new(config)?;
 //!
-//! // Meta-train on multiple tasks
-//! for task in tasks {
-//!     optimizer.meta_train(&task)?;
-//! }
+//! let mut params = HashMap::new();
+//! params.insert("layer1.weight".to_string(), Array2::from_elem((4, 4), 1.0));
 //!
-//! // Rapid adaptation to new task
-//! let params = Array1::from_elem(1000, 1.0);
-//! let grads = Array1::from_elem(1000, 0.01);
-//! let updated = optimizer.step(&params, &grads)?;  // Fast convergence
+//! let mut grads = HashMap::new();
+//! grads.insert("layer1.weight".to_string(), Array2::from_elem((4, 4), 0.01));
+//!
+//! // `step` takes the current loss and hands it back, so callers can chain steps
+//! let loss = optimizer.step(&mut params, &mut grads, 0.5)?;
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! ## Research Highlights
+//! ## Feature Flags
 //!
-//! - **Outperforms Hand-Designed** - Better than Adam on many tasks
-//! - **Generalizes Across Domains** - Vision, NLP, RL all benefit
-//! - **Few-Shot Learning** - Converges in 10-100 steps vs thousands
-//! - **Adaptive Schedules** - Learns optimal learning rate schedules
+//! | Feature | Gates | Default |
+//! |---|---|---|
+//! | `transformer` | [`adaptive`], [`transformer`], [`transformer_based_optimizer`] modules and the [`TransformerOptimizer`] / `TransformerBasedOptimizer` re-exports | yes |
+//! | `lstm` | [`lstm`] module and the [`LSTMOptimizer`] re-export | yes |
+//! | `meta_learning` | [`meta_learning`] module (MAML, Reptile, Meta-SGD) | yes |
+//!
+//! All other modules ([`common`], [`continual_learning`], [`darts_optimizer_search`],
+//! [`forward_mode`], [`reverse_mode`], [`gnn_optimizer`], [`higher_order`],
+//! [`ntm_optimizer`], [`online_maml`], [`quantum_learned`], [`realtime_adaptation`],
+//! [`zero_shot`], `few_shot`, `es_meta_training`, `domain_objectives`, `domain_optimizers`,
+//! `episodic_memory_impl`, `cross_domain_transfer`) are ungated and always available.
+//! Four integration tests declare `required-features` in `Cargo.toml` (`lstm_layers`,
+//! `lstm_meta_training`: `lstm`; `adaptive_enhancement`: `transformer`;
+//! `xavier_initialization`: `lstm` + `transformer`), which is why
+//! `--no-default-features --features <one family>` is a real, smaller build.
 //!
 //! ## Architecture
 //!
-//! Built exclusively on SciRS2:
-//! - **ML Pipeline**: `scirs2_core::ml_pipeline::MLPipeline`
-//! - **Neural**: `scirs2_core::neural_architecture_search`
-//! - **Memory**: `scirs2_core::memory_efficient::LazyArray`
-//! - **Metrics**: `scirs2_core::ml_pipeline::PipelineMetrics`
+//! Built on [`optirs-core`](https://docs.rs/optirs-core) and `scirs2-core`
+//! (`scirs2_core::ndarray`, `scirs2_core::numeric`, `scirs2_core::random`) - no direct
+//! `ndarray`/`rand` dependency.
 //!
 //! ## References
 //!

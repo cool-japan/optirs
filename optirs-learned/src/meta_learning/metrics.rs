@@ -172,7 +172,7 @@ impl<T: Float + Debug + Send + Sync + 'static> BatchObservations<T> {
     ///
     /// `forgetting_measure` is reported as zero: catastrophic forgetting is a
     /// property of a task *sequence* and cannot be observed from one batch.
-    /// [`super::types::ContinualLearningSystem`] measures it for real.
+    /// [`super::framework::ContinualLearningSystem`] measures it for real.
     pub fn adaptation_statistics(&self) -> AdaptationStatistics<T> {
         AdaptationStatistics {
             convergence_steps: self.convergence_steps.clone(),

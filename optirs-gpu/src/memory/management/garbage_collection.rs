@@ -816,7 +816,7 @@ impl IncrementalCollector {
     }
 
     /// The phase this collector is currently in (or [`IncrementalPhase::Idle`]
-    /// between incremental work slices) -- see [`Self::perform_incremental_work`].
+    /// between incremental work slices) -- see `Self::perform_incremental_work`.
     pub fn current_phase(&self) -> &IncrementalPhase {
         &self.current_phase
     }

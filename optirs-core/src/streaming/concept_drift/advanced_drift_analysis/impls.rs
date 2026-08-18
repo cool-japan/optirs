@@ -462,6 +462,60 @@ impl<A: Float + Send + Sync + std::fmt::Debug> DriftDetectorTrait<A> for DdmAdap
 }
 
 // ---------------------------------------------------------------------------
+// detector factory
+// ---------------------------------------------------------------------------
+
+/// Builds one fresh bank of base detectors from a configuration.
+///
+/// The bank is the same trio `AdvancedDriftDetector` runs over the whole
+/// stream — Page-Hinkley, ADWIN and DDM — but as a *new* set of instances with
+/// no shared state. That is the whole point: a drift detector is a stateful
+/// accumulator, so "run this detector on context A and also on context B"
+/// requires two instances, not two calls. Without a factory the per-context
+/// models could only ever have aliased the global bank, which would mean each
+/// context's verdict was computed from every other context's observations.
+pub(crate) fn build_detector_bank<A>(
+    config: &DriftDetectorConfig,
+) -> Vec<Box<dyn DriftDetectorTrait<A>>>
+where
+    A: Float + Sum + Send + Sync + std::fmt::Debug + 'static,
+{
+    let threshold = A::from(config.threshold).unwrap_or_else(A::one);
+    let warning = A::from(config.warningthreshold).unwrap_or_else(A::zero);
+    let delta = A::from(config.alpha).unwrap_or_else(|| A::from(0.002).unwrap_or_else(A::zero));
+
+    vec![
+        Box::new(PageHinkleyAdapter::new(threshold, warning)),
+        Box::new(AdwinAdapter::new(delta, config.window_size)),
+        Box::new(DdmAdapter::new(config.min_samples)),
+    ]
+}
+
+/// Combines one bank's per-detector verdicts into a single status.
+///
+/// Same majority rule the global combination uses (two detectors carry a
+/// verdict), minus the pattern term: drift patterns are learned over the whole
+/// stream, not per context, so folding one in here would import exactly the
+/// cross-context evidence the per-context banks exist to keep out.
+pub(crate) fn combine_bank_status(statuses: &[DriftStatus]) -> DriftStatus {
+    let drift = statuses
+        .iter()
+        .filter(|status| **status == DriftStatus::Drift)
+        .count();
+    let warning = statuses
+        .iter()
+        .filter(|status| **status == DriftStatus::Warning)
+        .count();
+    if drift >= 2 {
+        DriftStatus::Drift
+    } else if warning >= 2 || drift >= 1 {
+        DriftStatus::Warning
+    } else {
+        DriftStatus::Stable
+    }
+}
+
+// ---------------------------------------------------------------------------
 // C4: real feature extraction over a rolling window
 // ---------------------------------------------------------------------------
 
@@ -851,11 +905,14 @@ impl<A: Float + Send + Sync> AdaptiveThresholdManager<A> {
 // ---------------------------------------------------------------------------
 
 impl<A: Float + Send + Sync> ContextAwareDriftDetector<A> {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(detector_config: DriftDetectorConfig) -> Self {
         Self {
             context_features: Vec::new(),
             current_context: None,
             transition_matrix: HashMap::new(),
+            detector_config,
+            context_models: HashMap::new(),
+            context_status: HashMap::new(),
         }
     }
 
@@ -901,6 +958,74 @@ impl<A: Float + Send + Sync> ContextAwareDriftDetector<A> {
     /// Observed transition counts between contexts.
     pub fn transitions(&self) -> &HashMap<(String, String), A> {
         &self.transition_matrix
+    }
+
+    /// Context currently in force, or `None` before the first classification.
+    pub fn current_context(&self) -> Option<&str> {
+        self.current_context.as_deref()
+    }
+
+    /// Context ids that have a detector bank of their own.
+    pub fn context_ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self.context_models.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Number of contexts with a bank of their own.
+    pub fn context_count(&self) -> usize {
+        self.context_models.len()
+    }
+
+    /// Latest verdict of one context's own detector bank, or `None` if that
+    /// context has never been observed in.
+    ///
+    /// This is the verdict computed from *only* that context's observations —
+    /// which is what makes it distinguishable from the global one.
+    pub fn context_status(&self, context: &str) -> Option<DriftStatus> {
+        self.context_status.get(context).copied()
+    }
+}
+
+impl<A: Float + Sum + Send + Sync + std::fmt::Debug + 'static> ContextAwareDriftDetector<A> {
+    /// Feeds one observation to the current context's own detector bank,
+    /// creating that bank on first use, and returns its per-detector verdicts.
+    ///
+    /// The bank is created lazily, at the first observation belonging to the
+    /// context, so a context that is only ever *classified* (and never observed
+    /// in) does not allocate detectors it will never run.
+    ///
+    /// Returns an empty slice while no context has been classified yet: an
+    /// observation with no context cannot be attributed to one, and inventing
+    /// an "unknown" bucket for it here would mix genuinely unclassified
+    /// observations into a context of their own.
+    pub(crate) fn observe_in_context(&mut self, value: A) -> Vec<DriftStatus> {
+        let Some(context) = self.current_context.clone() else {
+            return Vec::new();
+        };
+        let config = &self.detector_config;
+        let bank = self
+            .context_models
+            .entry(context.clone())
+            .or_insert_with(|| build_detector_bank::<A>(config));
+
+        let statuses: Vec<DriftStatus> = bank
+            .iter_mut()
+            .map(|detector| detector.update(value))
+            .collect();
+        self.context_status
+            .insert(context, combine_bank_status(&statuses));
+        statuses
+    }
+
+    /// Resets every per-context bank, keeping the contexts themselves.
+    pub fn reset_context_models(&mut self) {
+        for bank in self.context_models.values_mut() {
+            for detector in bank.iter_mut() {
+                detector.reset();
+            }
+        }
+        self.context_status.clear();
     }
 }
 

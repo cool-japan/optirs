@@ -51,9 +51,16 @@
 //!   note above).
 //! - Cross-device workload migration (`fault_tolerance::migrate_workload`
 //!   returns `Err` rather than fabricate a live migration).
-//! - Some [`pod_coordination`] submodules (e.g. NTP-style clock offset
-//!   estimation) are configuration scaffolding for a future wave; consult each
-//!   module's doc comments for its individual status.
+//! - Most of [`pod_coordination`]'s `communication`, `topology` and
+//!   `resource_scheduling`/`load_balancing`/`gradient_aggregation`/
+//!   `batch_coordination`/`performance` submodules are still data-only
+//!   scaffolding: real types with derives, no methods, nothing wired to a
+//!   caller yet. A few pieces of `pod_coordination` are real today —
+//!   [`pod_coordination::coordination::coordinator::TPUPodCoordinator`]
+//!   delegates to the real [`coordination::PodCoordinator`], and
+//!   `synchronization::clocks::protocols::NtpSynchronizer` implements genuine
+//!   RFC 5905 clock-offset estimation — consult each module's own doc
+//!   comments for its individual status.
 //!
 //! ## Example
 //!

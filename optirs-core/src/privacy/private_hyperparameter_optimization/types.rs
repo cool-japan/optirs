@@ -869,7 +869,7 @@ impl<T: Float + Debug + Send + Sync + 'static> ObjectiveNoiseMechanism<T> {
     /// Perturb one objective value under the granted budget.
     ///
     /// `privacy_budget.epsilon_consumed` is the grant for this evaluation (see
-    /// [`HPOBudgetManager::get_evaluation_budget`]); the noise scale is derived
+    /// [`super::budget_manager::HPOBudgetManager::get_evaluation_budget`]); the noise scale is derived
     /// from it and from the declared sensitivity.
     pub fn add_noise(&mut self, value: f64, privacy_budget: &PrivacyBudget) -> Result<f64> {
         if !value.is_finite() {

@@ -23,7 +23,7 @@
 //! - `scirs2_core::array_protocol::GPUArray` for the GPU array interface
 //!
 //! Wiring those up means implementing [`GpuUtils::detect_backends`],
-//! [`GpuUtils::device_count`] and [`GpuOptimizer::step_gpu`]; the availability
+//! [`GpuUtils::device_count`] and `GpuOptimizer::step_gpu`; the availability
 //! reporting below then becomes truthful automatically.
 
 use scirs2_core::ndarray::{Array1, ArrayView1, ScalarOperand};

@@ -523,7 +523,7 @@ pub struct MetricsSnapshot<A: Float + Send + Sync> {
 
     /// Microseconds since the Unix epoch: the full resolution of the sample
     /// this snapshot was taken from, and the key it is stored under in
-    /// [`HistoricalMetrics::time_series`].
+    /// `HistoricalMetrics::time_series`.
     pub timestamp_micros: u64,
 
     /// Performance metrics at this time
@@ -1114,7 +1114,12 @@ impl<A: Float + Default + Clone + std::fmt::Debug + Send + Sync> StreamingMetric
         self.export_config = config;
     }
 
-    /// Replace the retention policy governing the raw time series.
+    /// Replace the retention policy governing the raw time series and the
+    /// per-period aggregated roll-ups.
+    ///
+    /// `raw_data_retention` prunes the stored snapshots immediately;
+    /// `aggregated_retention` is applied when a roll-up is requested, since the
+    /// roll-up is computed on demand rather than stored.
     pub fn set_retention_policy(&mut self, policy: RetentionPolicy) {
         self.historical_data.retention_policy = policy;
         self.historical_data.prune();

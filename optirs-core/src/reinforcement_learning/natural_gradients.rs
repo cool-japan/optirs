@@ -835,7 +835,7 @@ impl<
     /// — never a vector of zeros, which would silently zero the Fisher.
     ///
     /// This is a public single-sample convenience wrapper; the batched Fisher
-    /// estimation path ([`Self::per_sample_scores`]) computes the same
+    /// estimation path (`Self::per_sample_scores`) computes the same
     /// quantity for a whole trajectory more efficiently (one analytic
     /// `score_matrix` call for the batch, rather than one per sample) and does
     /// not call through this method.

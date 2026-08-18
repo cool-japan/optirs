@@ -1,7 +1,7 @@
 //! The parametric task model shared by every meta-learner in this module.
 //!
 //! Meta-learning only means something if all the learners that
-//! [`super::types::MetaLearningFramework`] can dispatch to agree on what the
+//! [`super::framework::MetaLearningFramework`] can dispatch to agree on what the
 //! meta-parameters *are*. This module fixes that contract:
 //!
 //! ```text

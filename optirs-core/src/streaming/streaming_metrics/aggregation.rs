@@ -281,7 +281,49 @@ impl<A: Float + Send + Sync> HistoricalMetrics<A> {
             });
         }
 
+        self.evict_expired_buckets(period, &mut aggregated);
         Ok(aggregated)
+    }
+
+    /// Drop roll-up buckets that have fallen outside
+    /// [`RetentionPolicy::aggregated_retention`] for their period.
+    ///
+    /// The field configured nothing before this: it was written by
+    /// `RetentionPolicy::default`, cloned around, and read by no one, so a
+    /// caller who asked for "keep minute buckets for one hour" still received
+    /// minute buckets from arbitrarily far back.
+    ///
+    /// The window is anchored on the **newest bucket in the roll-up**, not on
+    /// `SystemTime::now()`, for the same reason [`Self::prune`] anchors the raw
+    /// window on the newest stored sample: for this collector the series is the
+    /// clock. A wall-clock anchor would empty every roll-up of a series that is
+    /// replayed from a capture, back-filled, or simply older than its own
+    /// retention — and would make the result of an otherwise pure function
+    /// depend on when it was called.
+    ///
+    /// A period with no configured retention is left alone: an absent entry
+    /// says nothing about how long that resolution should be kept, and reading
+    /// it as zero would silently discard everything.
+    fn evict_expired_buckets(
+        &self,
+        period: AggregationPeriod,
+        buckets: &mut Vec<AggregatedMetrics>,
+    ) {
+        let Some(retention) = self
+            .retention_policy
+            .aggregated_retention
+            .get(&period)
+            .copied()
+        else {
+            return;
+        };
+        // `buckets` is built from an ordered `BTreeMap`, so the last entry is
+        // the newest.
+        let Some(newest_end) = buckets.last().map(|bucket| bucket.period_end) else {
+            return;
+        };
+        let cutoff = newest_end.saturating_sub(retention);
+        buckets.retain(|bucket| bucket.period_end > cutoff);
     }
 }
 

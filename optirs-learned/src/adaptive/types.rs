@@ -571,7 +571,7 @@ impl<T: Float + Debug + scirs2_core::ndarray::ScalarOperand + Send + Sync + 'sta
         })
     }
 
-    /// Statistics behind the most recent [`Self::analyze`] call.
+    /// Statistics behind the most recent `Self::analyze` call.
     pub fn last_statistics(&self) -> &LandscapeStatistics {
         &self.last_statistics
     }

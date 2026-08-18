@@ -108,7 +108,7 @@ pub fn try_scalar_str<A: Float, V: ToPrimitive + Copy>(value: V) -> std::result:
 /// struct literals. For the `f32`/`f64` types this crate targets, conversion of
 /// the numeric literals used in those positions always succeeds, so the
 /// fallback is defensive rather than a papered-over failure — but pick a
-/// fallback that is safe in context (for example [`Float::one`] for a
+/// fallback that is safe in context (for example `Float::one` for a
 /// multiplicative factor or a divisor, so a failed conversion can never
 /// introduce a division by zero).
 ///

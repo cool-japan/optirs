@@ -28,7 +28,8 @@
 //! - ✅ Evolutionary algorithms ([`search_strategies::evolutionary`] - population-based search)
 //! - ✅ RL-based search ([`search_strategies::rl_search`] - neural-controller sampling)
 //! - ✅ Differentiable search ([`search_strategies::differentiable`] - DARTS-style gradient search)
-//! - ✅ Multi-objective optimization ([`multi_objective`] - NSGA-II, weighted-sum, Pareto frontier)
+//! - ✅ Multi-objective optimization ([`multi_objective`] - NSGA-II, NSGA-III, MOEA/D,
+//!   weighted-sum, Pareto frontier, exact hypervolume)
 //! - ✅ Hardware-aware cost modeling ([`hardware_cost`] - latency/memory/energy estimation)
 //! - ✅ AutoML pipeline coordination ([`automl_pipeline`]), cross-domain transfer, few-shot and
 //!   progressive search
@@ -47,7 +48,13 @@
 //! - **Pareto Frontier** - Balance accuracy, speed, memory
 //! - **Weighted Sum** - Customizable objective functions
 //! - **NSGA-II** - Non-dominated sorting genetic algorithm
-//! - **Constraint Satisfaction** - Hardware and resource constraints
+//! - **NSGA-III** - Reference-point-based many-objective sorting
+//! - **MOEA/D** - Decomposition-based optimization (Tchebycheff/PBI/ASF/weighted-sum)
+//! - Interactive preference articulation and Pareto-level constraint handling
+//!   (`MultiObjectiveConfig::user_preferences`/`constraint_handling`) are declared
+//!   but not yet consulted by any optimizer; hard resource limits are enforced
+//!   separately by [`nas_engine::resources::ResourceMonitor`], not by the
+//!   multi-objective layer.
 //!
 //! ### Progressive Search
 //! - **Start Simple** - Begin with small architectures
@@ -148,13 +155,6 @@
 //! - **Learning Rate Schedules** - Warmup, decay, cosine annealing
 //! - **Regularization** - L1/L2, dropout rates, gradient clipping
 //! - **Architecture Components** - Optimizer composition and ensembles
-//!
-//! ## Performance
-//!
-//! - **Automated Discovery** - Find better optimizers than hand-tuning
-//! - **Hardware-Specific** - Optimized for your exact hardware
-//! - **Multi-Objective** - No trade-offs between accuracy and speed
-//! - **Generalization** - Architectures transfer across tasks
 //!
 //! ## Architecture
 //!

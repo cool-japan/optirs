@@ -2,6 +2,8 @@
 //
 // This module provides the MetricOptimizer which uses metrics to guide optimization.
 
+#[cfg(not(feature = "metrics-integration"))]
+use crate::error::OptimError;
 use crate::error::Result;
 use crate::optimizers::Optimizer;
 #[cfg(feature = "metrics-integration")]

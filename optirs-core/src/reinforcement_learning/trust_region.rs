@@ -189,7 +189,7 @@ impl<
     ///
     /// Each row of `samples` is a per-sample score vector
     /// `g_i = ∇_θ log π(a_i | s_i)` whose length must equal the policy parameter
-    /// dimension. These are consumed by [`Self::fisher_vector_product`] to form the
+    /// dimension. These are consumed by `Self::fisher_vector_product` to form the
     /// empirical estimate `F̂ = (1/N) Σ_i g_i g_iᵀ` without ever materializing the
     /// dense `d × d` matrix.
     pub fn set_score_samples(&mut self, samples: Array2<T>) {

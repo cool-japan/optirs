@@ -219,7 +219,7 @@ fn balanced_accuracy_is_measured_not_assumed() {
     // A detector that flags nothing on a rare-anomaly stream has high plain
     // accuracy but a balanced accuracy of one half.
     let mut lazy = DetectionCounters::default();
-    for index in 0..100 {
+    for index in 0..100_u32 {
         lazy.record_outcome(false, index.is_multiple_of(100));
     }
     let balanced = lazy.balanced_accuracy().expect("balanced accuracy");

@@ -491,9 +491,9 @@ impl<
     ///
     /// # Errors
     ///
-    /// [`OptimError::DimensionMismatch`] if the update's length differs from the
+    /// [`crate::error::OptimError::DimensionMismatch`] if the update's length differs from the
     /// stored global model's, since silently zero-extending or truncating would
-    /// corrupt the model. [`OptimError::InvalidParameter`] for an empty update.
+    /// corrupt the model. [`crate::error::OptimError::InvalidParameter`] for an empty update.
     pub fn update_global_model(&mut self, aggregated_update: &Array1<T>) -> Result<Array1<T>> {
         if aggregated_update.is_empty() {
             return Err(crate::error::OptimError::InvalidParameter(

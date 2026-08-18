@@ -398,8 +398,8 @@ pub struct CheckpointValidator<T: Float + Debug + Send + Sync + 'static> {
 }
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> CheckpointValidator<T> {
     /// Creates a validator pre-registered with the built-in rules
-    /// ([`RequiredIdentifiersRule`], [`NoSelfDependencyRule`],
-    /// [`NonEmptyDataRule`]).
+    /// (`RequiredIdentifiersRule`, `NoSelfDependencyRule`,
+    /// `NonEmptyDataRule`).
     ///
     /// Regression fix (F9): [`Self::validate`] used to unconditionally
     /// return `valid: true` regardless of `validation_rules` (which

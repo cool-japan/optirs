@@ -240,7 +240,7 @@ pub struct RecoveryManager<T: Float + Debug + Send + Sync + 'static> {
 }
 impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> RecoveryManager<T> {
     /// Creates a recovery manager pre-registered with
-    /// [`DefaultRecoveryStrategy`] under the `"default"` name (also its
+    /// `DefaultRecoveryStrategy` under the `"default"` name (also its
     /// `default_strategy`).
     ///
     /// Regression fix (F9): [`Self::recover`] used to ignore both of its

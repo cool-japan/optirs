@@ -24,7 +24,7 @@
 //!
 //! Behavioural and API changes:
 //!
-//! * [`types::PrivateHyperparameterOptimizer::new`] rejects a configuration with
+//! * [`optimizer::PrivateHyperparameterOptimizer::new`] rejects a configuration with
 //!   `private_model_selection: true` that declares no objective sensitivity.
 //! * [`types::PrivateHPOResults`] gained `selection`, which records whether the
 //!   returned configuration was chosen privately, by which mechanism, and at

@@ -532,7 +532,7 @@ fn drift_duration_estimate_never_collapses_to_zero() {
 
 #[test]
 fn context_classification_uses_every_weighted_feature() {
-    let mut detector = ContextAwareDriftDetector::<f64>::new();
+    let mut detector = ContextAwareDriftDetector::<f64>::new(DriftDetectorConfig::default());
     // A low-importance high value must not by itself select "high_activity".
     detector.update_context(&[
         ContextFeature {
@@ -560,5 +560,191 @@ fn context_classification_uses_every_weighted_feature() {
     assert!(
         !detector.transitions().is_empty(),
         "the observed context transition must be recorded"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// F5: per-context detector banks
+// ---------------------------------------------------------------------------
+
+/// A deterministic value in `[-0.5, 0.5)`, so the regimes carry real
+/// within-context variation rather than being two constants.
+fn context_wobble(step: usize) -> f64 {
+    let mut mixed = (step as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    mixed ^= mixed >> 31;
+    ((mixed >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
+}
+
+fn context_feature(value: f64) -> ContextFeature<f64> {
+    ContextFeature {
+        name: "activity".to_string(),
+        value,
+        importance_weight: 1.0,
+        temporal_stability: 1.0,
+    }
+}
+
+/// F5: every context gets a detector bank of its own, and those banks do not
+/// see each other's observations.
+///
+/// The stream alternates between two regimes that are each perfectly stationary
+/// — around 1 and around 100 — so there is no drift in either context. A single
+/// shared bank cannot say that: every switch enters its accumulators as a
+/// 99-unit level change. The per-context banks must stay stable on exactly the
+/// same values, which is only possible if each one saw only its own context's
+/// observations.
+#[test]
+fn per_context_detector_banks_do_not_cross_contaminate() {
+    let config = DriftDetectorConfig::default();
+    let mut detector = ContextAwareDriftDetector::<f64>::new(config.clone());
+    let mut shared = impls::build_detector_bank::<f64>(&config);
+
+    let mut shared_alarms = 0usize;
+    let mut context_alarms = 0usize;
+
+    for step in 0..600usize {
+        let is_low = step.is_multiple_of(2);
+        let value = if is_low {
+            1.0 + 0.05 * context_wobble(step)
+        } else {
+            100.0 + 0.05 * context_wobble(step)
+        };
+
+        detector.update_context(&[context_feature(if is_low { 0.0 } else { 1.0 })]);
+        let per_context = detector.observe_in_context(value);
+        assert_eq!(
+            per_context.len(),
+            3,
+            "every context bank must run all three configured detectors"
+        );
+        if impls::combine_bank_status(&per_context) != DriftStatus::Stable {
+            context_alarms += 1;
+        }
+
+        // The control uses the *same* combination rule, so the only difference
+        // between the two counts is whose observations went into which bank.
+        let shared_statuses: Vec<DriftStatus> = shared
+            .iter_mut()
+            .map(|detector| detector.update(value))
+            .collect();
+        if impls::combine_bank_status(&shared_statuses) != DriftStatus::Stable {
+            shared_alarms += 1;
+        }
+    }
+
+    assert_eq!(
+        detector.context_ids(),
+        vec!["high_activity", "low_activity"],
+        "each classified context must have acquired a bank of its own"
+    );
+    assert_eq!(detector.context_count(), 2);
+
+    assert_eq!(
+        context_alarms, 0,
+        "a context whose own observations never change level must never raise \
+         drift; {context_alarms} of 600 steps did, so the banks are sharing state"
+    );
+    assert_eq!(
+        detector.context_status("low_activity"),
+        Some(DriftStatus::Stable)
+    );
+    assert_eq!(
+        detector.context_status("high_activity"),
+        Some(DriftStatus::Stable)
+    );
+    assert_eq!(
+        detector.context_status("never_seen"),
+        None,
+        "a context that was never observed in has no verdict to report"
+    );
+
+    // Control: the very same values through one shared bank do raise alarms.
+    // Without this the test above would also pass for a bank that never fires.
+    assert!(
+        shared_alarms > 100,
+        "the control (one shared bank over the interleaved stream) raised only \
+         {shared_alarms} alarms out of 600 steps, so the per-context result \
+         proves nothing; measured at the time of writing it raises 300 — one \
+         for every switch into the high regime"
+    );
+}
+
+/// F5: the banks are genuinely per context — resetting them clears the recorded
+/// verdicts without forgetting which contexts exist.
+#[test]
+fn per_context_banks_are_resettable_and_keep_their_contexts() {
+    let mut detector = ContextAwareDriftDetector::<f64>::new(DriftDetectorConfig::default());
+    for step in 0..120usize {
+        let is_low = step.is_multiple_of(2);
+        detector.update_context(&[context_feature(if is_low { 0.0 } else { 1.0 })]);
+        detector.observe_in_context(if is_low { 1.0 } else { 100.0 });
+    }
+    assert_eq!(detector.context_count(), 2);
+    assert!(detector.context_status("low_activity").is_some());
+
+    detector.reset_context_models();
+    assert_eq!(
+        detector.context_count(),
+        2,
+        "resetting the banks must not forget the contexts themselves"
+    );
+    assert_eq!(
+        detector.context_status("low_activity"),
+        None,
+        "a reset bank has no verdict until it observes again"
+    );
+}
+
+/// F5: an observation that arrives before any context has been classified
+/// cannot be attributed to a context, so it must not silently create one.
+#[test]
+fn an_unclassified_observation_creates_no_context_bank() {
+    let mut detector = ContextAwareDriftDetector::<f64>::new(DriftDetectorConfig::default());
+    assert!(detector.current_context().is_none());
+    assert!(detector.observe_in_context(1.0).is_empty());
+    assert_eq!(detector.context_count(), 0);
+}
+
+/// F5: the per-context banks are wired into the public detection path — they
+/// are fed by `detect_drift_advanced` and their verdicts are reachable — rather
+/// than being state that nothing ever runs.
+#[test]
+fn detect_drift_advanced_runs_the_per_context_banks() {
+    let mut detector = AdvancedDriftDetector::<f64>::new(DriftDetectorConfig::default());
+    assert_eq!(detector.context_detector().context_count(), 0);
+
+    for step in 0..240usize {
+        let is_low = step.is_multiple_of(2);
+        let value = if is_low {
+            1.0 + 0.05 * context_wobble(step)
+        } else {
+            100.0 + 0.05 * context_wobble(step)
+        };
+        detector
+            .detect_drift_advanced(value, &[context_feature(if is_low { 0.0 } else { 1.0 })])
+            .expect("detection must succeed");
+    }
+
+    let context = detector.context_detector();
+    assert_eq!(
+        context.context_ids(),
+        vec!["high_activity", "low_activity"],
+        "both contexts must have been observed in through the public path"
+    );
+    assert_eq!(
+        context.context_status("low_activity"),
+        Some(DriftStatus::Stable),
+        "the low-activity context is stationary in its own right"
+    );
+    assert_eq!(
+        context.context_status("high_activity"),
+        Some(DriftStatus::Stable),
+        "the high-activity context is stationary in its own right"
+    );
+    assert!(
+        context.current_context().is_some(),
+        "the classified context must be reported"
     );
 }

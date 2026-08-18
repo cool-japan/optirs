@@ -215,7 +215,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> MetaLearner<T> 
         Ok(meta_loss)
     }
 
-    /// Adaptation events recorded by [`Self::step`], oldest first.
+    /// Adaptation events recorded by `Self::step`, oldest first.
     pub fn adaptation_history(&self) -> &VecDeque<AdaptationEvent<T>> {
         &self.meta_state.adaptation_history
     }
@@ -332,7 +332,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> TransferLearner
         })
     }
 
-    /// Metrics recorded by the most recent [`Self::transfer_to_domain`] call.
+    /// Metrics recorded by the most recent `Self::transfer_to_domain` call.
     pub fn metrics(&self) -> &TransferMetrics<T> {
         &self.transfer_metrics
     }

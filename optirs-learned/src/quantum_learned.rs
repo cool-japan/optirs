@@ -57,7 +57,7 @@ const DEFAULT_NORM_EMA_DECAY: f64 = 0.9;
 /// Each variant holds a fully-configured core optimizer from
 /// [`optirs_core::quantum_inspired`]. The wrapper dispatches the
 /// [`AdvancedOptimizer`] interface to the held optimizer through the
-/// [`Optimizer`] trait specialised to [`Ix1`].
+/// [`Optimizer`] trait specialised to [`tyalias@Ix1`].
 #[derive(Debug)]
 pub enum QuantumBackend<T>
 where

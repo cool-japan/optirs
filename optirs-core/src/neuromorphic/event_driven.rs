@@ -1237,7 +1237,7 @@ impl<
     /// With `config.event_compression` enabled the event is compressed to
     /// bytes *here* and only those bytes are retained (F57): the live queue
     /// really does store compressed frames instead of whole events, and the
-    /// event is reconstructed lazily in [`Self::pop_next_event`] when it is
+    /// event is reconstructed lazily in `Self::pop_next_event` when it is
     /// about to be processed.
     pub fn enqueue_event(&mut self, event: NeuromorphicEvent<T>) -> Result<()> {
         // Check rate limits
