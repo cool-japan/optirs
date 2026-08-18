@@ -626,7 +626,14 @@ impl PerformanceRegressionDetector {
                 p_value: statisticalresult.p_value,
                 effect_size: statisticalresult.effect_size,
                 baseline_value: baseline.clone().map(|b| b.value).unwrap_or(0.0),
-                current_value: *values.last().expect("unwrap failed"),
+                // `values.len() < 2` returned early above, so `values` is
+                // non-empty here; `ok_or_else` + `?` keeps that guarantee
+                // honest instead of panicking if it is ever violated.
+                current_value: *values.last().ok_or_else(|| {
+                    OptimError::OptimizationError(
+                        "metric values unexpectedly empty despite length check".to_string(),
+                    )
+                })?,
                 change_percentage: self.calculate_change_percentage(&values, baseline.as_ref()),
                 regression_type: self.classify_regression_type(metrictype, &values),
                 evidence: statisticalresult.evidence.clone(),
@@ -648,8 +655,14 @@ impl PerformanceRegressionDetector {
 
     /// Calculate percentage change
     fn calculate_change_percentage(&self, values: &[f64], baseline: Option<&MetricValue>) -> f64 {
+        // `if let` on `.last()` (rather than an implicit non-emptiness
+        // assumption plus `.expect()`) makes an empty `values` a defined
+        // `0.0` result instead of a panic; this function returns a bare
+        // `f64`, so there is no `Result` to propagate an error through.
         if let Some(baseline) = baseline {
-            let current = *values.last().expect("unwrap failed");
+            let Some(&current) = values.last() else {
+                return 0.0;
+            };
             if baseline.value != 0.0 {
                 ((current - baseline.value) / baseline.value) * 100.0
             } else {
@@ -657,7 +670,9 @@ impl PerformanceRegressionDetector {
             }
         } else if values.len() >= 2 {
             let previous = values[values.len() - 2];
-            let current = *values.last().expect("unwrap failed");
+            let Some(&current) = values.last() else {
+                return 0.0;
+            };
             if previous != 0.0 {
                 ((current - previous) / previous) * 100.0
             } else {
@@ -1096,12 +1111,12 @@ impl PerformanceRegressionDetector {
                 .map(|mv| mv.value)
                 .collect();
 
-            if !values.is_empty() {
+            if let Some(&current_value) = values.last() {
                 let trend = self.historical_data.trends.get(metrictype);
                 metric_summaries.insert(
                     metrictype.clone(),
                     MetricSummary {
-                        current_value: *values.last().expect("unwrap failed"),
+                        current_value,
                         trend_direction: trend
                             .map(|t| t.direction.clone())
                             .unwrap_or(TrendDirection::Uncertain),
@@ -1347,6 +1362,15 @@ impl StatisticalAnalyzer {
 
     /// Scale-invariant Mann-Kendall trend significance for `values` (see
     /// [`mann_kendall_trend_significance`]).
+    ///
+    /// `PerformanceRegressionDetector` has its own copy of this same method and
+    /// is the one actually called in production (it does not delegate through
+    /// `self.statistical_analyzer`); this one keeps `StatisticalAnalyzer`'s API
+    /// consistent with it (see the doc comment on the free function) and is
+    /// exercised directly by `test_calculate_trend_significance_is_scale_invariant`,
+    /// hence test-only -- this method is private (no `pub`), so this does not
+    /// remove anything from the crate's external API.
+    #[cfg(test)]
     fn calculate_trend_significance(&self, values: &[f64]) -> f64 {
         mann_kendall_trend_significance(values)
     }
@@ -1490,7 +1514,14 @@ impl AlertSystem {
         Ok(())
     }
 
+    /// Actually deliver `alert` through `channel`, via the same
+    /// `notification_transport` module `ci_cd_automation::integrations` uses
+    /// (real `curl`-based SMTP/HTTP by default, honoring
+    /// `OPTIRS_NOTIFICATION_TRANSPORT` for tests/CI) -- rather than the
+    /// `println!`-only placeholders this used to have for Email/Slack.
     fn send_via_channel(&self, alert: &Alert, channel: &NotificationChannel) -> Result<()> {
+        use crate::notification_transport::{self, DeliveryTarget, SmtpTarget};
+
         match channel {
             NotificationChannel::Console => {
                 println!("ALERT: {}", alert.title);
@@ -1500,16 +1531,54 @@ impl AlertSystem {
                 std::fs::write(path, alert_json)?;
             }
             NotificationChannel::Email(config) => {
-                // Would implement email sending
-                println!("Email alert sent: {}", alert.title);
+                let message = format!(
+                    "From: {}\r\nTo: {}\r\nSubject: [{:?}] {}\r\n\r\n{}\r\n",
+                    config.from_address,
+                    config.to_addresses.join(", "),
+                    alert.severity,
+                    alert.title,
+                    alert.description
+                );
+                let smtp_target = SmtpTarget {
+                    host: config.smtp_server.clone(),
+                    port: config.smtp_port,
+                    use_tls: true,
+                    username: Some(config.username.clone()),
+                    password: Some(config.password.clone()),
+                    from: config.from_address.clone(),
+                    to: config.to_addresses.clone(),
+                    timeout: Duration::from_secs(30),
+                };
+                notification_transport::deliver_email(
+                    &notification_transport::transport_kind_from_env(),
+                    &smtp_target,
+                    &message,
+                )?;
             }
             NotificationChannel::Slack(config) => {
-                // Would implement Slack webhook
-                println!("Slack alert sent: {}", alert.title);
+                let payload = serde_json::json!({
+                    "channel": config.channel,
+                    "username": config.username,
+                    "icon_emoji": config.icon_emoji,
+                    "text": format!("*{}*\n{}", alert.title, alert.description),
+                })
+                .to_string();
+                let target =
+                    DeliveryTarget::json_post(config.webhook_url.clone(), config.channel.clone());
+                notification_transport::deliver(
+                    &notification_transport::transport_kind_from_env(),
+                    &target,
+                    &payload,
+                )?;
             }
             NotificationChannel::Webhook(url) => {
-                // Would implement webhook call
-                println!("Webhook alert sent to {}: {}", url, alert.title);
+                let payload = serde_json::to_string(alert)?;
+                let target = DeliveryTarget::json_post(url.clone(), "webhook");
+                notification_transport::deliver(
+                    &notification_transport::transport_kind_from_env(),
+                    &target,
+                    &payload,
+                )?;
             }
         }
         Ok(())

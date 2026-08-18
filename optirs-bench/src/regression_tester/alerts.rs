@@ -567,8 +567,7 @@ mod tests {
         AlertStatus, EmailAlertConfig, GitHubAlertConfig, SlackAlertConfig,
     };
     use crate::regression_tester::types::{
-        ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, StatisticalTestResult,
-        TrendAnalysis, TrendDirection,
+        ChangePointAnalysis, OutlierAnalysis, RegressionAnalysis, TrendAnalysis, TrendDirection,
     };
 
     fn create_test_regression(severity: f64, test_id: &str) -> RegressionResult<f64> {

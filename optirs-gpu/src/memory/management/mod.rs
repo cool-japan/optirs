@@ -137,9 +137,20 @@ impl IntegratedMemoryManager {
     }
 
     /// Run garbage collection
+    ///
+    /// `memory_regions` describes the caller's current view of live
+    /// allocations, but it is intentionally not registered with
+    /// [`GarbageCollectionEngine`]: that engine only selects a collector for
+    /// a region when `region.utilization < mark_threshold` (see
+    /// `MarkSweepCollector::can_collect`), while every region built by the
+    /// current caller is a single allocation at 100% utilization. Feeding
+    /// such regions in would turn every call into a hard
+    /// `GCError::NoSuitableCollector` instead of today's harmless no-op.
+    /// Tracked as a finding rather than force-integrated; see the crate's
+    /// lint/unwrap sweep notes.
     pub fn run_garbage_collection(
         &mut self,
-        memory_regions: &HashMap<usize, MemoryRegion>,
+        _memory_regions: &HashMap<usize, MemoryRegion>,
     ) -> Result<usize, MemoryManagementError> {
         let start_time = Instant::now();
 
@@ -157,6 +168,11 @@ impl IntegratedMemoryManager {
     }
 
     /// Perform prefetch operation
+    ///
+    /// Records the access with the [`PrefetchingEngine`] so its access-history
+    /// tracker and pattern strategies see real data; the returned bool
+    /// reflects whether this access was itself a hit against data the engine
+    /// had already prefetched (a genuine cache hit), not a fabricated value.
     pub fn prefetch(
         &mut self,
         address: *mut c_void,
@@ -165,54 +181,88 @@ impl IntegratedMemoryManager {
     ) -> Result<bool, MemoryManagementError> {
         let start_time = Instant::now();
 
-        // FEATURE STATUS (v1.0.0): Prefetching engine integration pending
-        //
-        // The prefetching infrastructure is in place, but full hardware-level
-        // prefetch integration requires platform-specific optimizations that
-        // are planned for v1.1.0.
-        //
-        // For v1.0.0, this method tracks prefetch requests for monitoring
-        // purposes. Users can manually manage GPU memory prefetching using
-        // driver-specific APIs if needed.
-        //
-        // PLANNED (v1.1.0+): Full prefetch_engine integration with:
-        // - Hardware prefetch hints
-        // - Adaptive prefetch strategies
-        // - Cross-device prefetch coordination
-        let prefetched = false; // Will be true when prefetch_engine.prefetch() is implemented
+        let access_type = match access_pattern {
+            Some(pattern) if pattern.eq_ignore_ascii_case("write") => {
+                prefetching::AccessType::Write
+            }
+            Some(pattern) if pattern.eq_ignore_ascii_case("read") => prefetching::AccessType::Read,
+            _ => prefetching::AccessType::ReadWrite,
+        };
+
+        let hits_before = self.prefetch_engine.get_stats().successful_prefetches;
+        self.prefetch_engine
+            .record_access(prefetching::MemoryAccess {
+                address: address as usize,
+                size,
+                timestamp: Instant::now(),
+                access_type,
+                context_id: 0,
+                kernel_id: None,
+            });
+        let prefetched = self.prefetch_engine.get_stats().successful_prefetches > hits_before;
 
         self.stats.prefetch_requests += 1;
         if prefetched {
             self.stats.prefetch_hits += 1;
         }
 
-        self.stats.prefetch_accuracy = self.stats.prefetch_requests.saturating_sub(1).max(1) as f64
-            / self.stats.prefetch_requests as f64;
+        self.stats.prefetch_accuracy =
+            self.stats.prefetch_hits as f64 / self.stats.prefetch_requests as f64;
         self.stats.total_management_time += start_time.elapsed();
 
         Ok(prefetched)
     }
 
     /// Perform memory eviction
-    pub fn evict_memory(&mut self, target_bytes: usize) -> Result<usize, MemoryManagementError> {
+    ///
+    /// Registers `memory_regions` with the [`EvictionEngine`] (most-pressured,
+    /// then largest, region first) and evicts real objects from it via the
+    /// engine's active policy until `target_bytes` have been reclaimed or
+    /// there is nothing left to evict. The returned count is the true sum of
+    /// evicted object sizes, not an estimate.
+    pub fn evict_memory(
+        &mut self,
+        target_bytes: usize,
+        memory_regions: &HashMap<usize, MemoryRegion>,
+    ) -> Result<usize, MemoryManagementError> {
         let start_time = Instant::now();
+        let mut bytes_evicted = 0usize;
 
-        // FEATURE STATUS (v1.0.0): Eviction engine integration pending
-        //
-        // The eviction policy infrastructure (LRU, LFU, ARC, etc.) is in place,
-        // but full integration with driver-level memory eviction requires
-        // platform-specific implementations planned for v1.1.0.
-        //
-        // For v1.0.0, memory management should be handled through explicit
-        // buffer deallocation. This method tracks eviction requests for
-        // monitoring purposes.
-        //
-        // PLANNED (v1.1.0+): Full eviction_engine integration with:
-        // - Automatic victim selection based on policies
-        // - Driver-level memory eviction hints
-        // - Multi-device eviction coordination
-        // - Eviction cost prediction
-        let bytes_evicted = 0; // Will be non-zero when eviction_engine.evict() is implemented
+        let mut ordered: Vec<&MemoryRegion> = memory_regions.values().collect();
+        ordered.sort_by(|a, b| {
+            b.pressure
+                .partial_cmp(&a.pressure)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.size.cmp(&a.size))
+        });
+
+        for region in ordered {
+            if bytes_evicted >= target_bytes {
+                break;
+            }
+
+            self.eviction_engine.register_region(
+                region.base_addr,
+                region.size,
+                region.region_type.clone(),
+            );
+            for object in region.objects.values() {
+                self.eviction_engine
+                    .add_object(region.base_addr, object.clone())
+                    .map_err(|e| MemoryManagementError::EvictionFailed(format!("{:?}", e)))?;
+            }
+
+            let victims = self
+                .eviction_engine
+                .evict(region.base_addr, target_bytes - bytes_evicted)
+                .map_err(|e| MemoryManagementError::EvictionFailed(format!("{:?}", e)))?;
+
+            for victim_addr in &victims {
+                if let Some(object) = region.objects.get(victim_addr) {
+                    bytes_evicted += object.size;
+                }
+            }
+        }
 
         self.stats.evictions_performed += 1;
         self.stats.bytes_evicted += bytes_evicted as u64;
@@ -222,9 +272,20 @@ impl IntegratedMemoryManager {
     }
 
     /// Run defragmentation
+    ///
+    /// `memory_regions` is intentionally not registered with
+    /// [`DefragmentationEngine`]: both built-in compaction strategies require
+    /// `MemoryLayoutTracker::get_total_free_space() > 0` to be eligible
+    /// (`can_handle`), but the current caller only ever reports one region
+    /// per live allocation with no free space (region size == its single
+    /// object's size). Registering that data would not change the outcome
+    /// (`DefragError::NoSuitableStrategy` either way) and free-space
+    /// tracking would need to be added at the caller first. Tracked as a
+    /// finding rather than force-integrated; see the crate's lint/unwrap
+    /// sweep notes.
     pub fn defragment(
         &mut self,
-        memory_regions: &HashMap<usize, MemoryRegion>,
+        _memory_regions: &HashMap<usize, MemoryRegion>,
     ) -> Result<usize, MemoryManagementError> {
         let start_time = Instant::now();
 
@@ -258,7 +319,7 @@ impl IntegratedMemoryManager {
             if memory_usage_ratio > 0.9 {
                 let target_eviction =
                     (memory_usage_ratio - self.config.memory_pressure_threshold) * 1_000_000.0; // Estimate bytes
-                let _ = self.evict_memory(target_eviction as usize)?;
+                let _ = self.evict_memory(target_eviction as usize, memory_regions)?;
             }
 
             // If severely fragmented, run defragmentation
@@ -271,24 +332,32 @@ impl IntegratedMemoryManager {
     }
 
     /// Update access patterns for adaptive management
+    ///
+    /// Feeds the access into the [`PrefetchingEngine`]'s access-history
+    /// tracker (mapped from this module's coarse [`AccessType`] to
+    /// [`prefetching::AccessType`]) so its pattern strategies observe real
+    /// traffic instead of being permanently starved of data.
     pub fn update_access_pattern(
         &mut self,
         address: *mut c_void,
         size: usize,
         access_type: AccessType,
     ) -> Result<(), MemoryManagementError> {
-        // FEATURE STATUS (v1.0.0): Access pattern tracking pending
-        //
-        // The infrastructure for tracking access patterns is in place, but
-        // integration with the prefetching and eviction engines requires
-        // runtime access pattern analysis that is planned for v1.1.0.
-        //
-        // PLANNED (v1.1.0+):
-        // - self.prefetch_engine.update_access_history(address, size, access_type.clone());
-        // - self.eviction_engine.record_access(address, size, access_type);
-        //
-        // For v1.0.0, users can manage access patterns explicitly through
-        // careful buffer management and ordering.
+        let mapped_type = match access_type {
+            AccessType::Read | AccessType::Sequential => prefetching::AccessType::Read,
+            AccessType::Write => prefetching::AccessType::Write,
+            AccessType::ReadWrite | AccessType::Random => prefetching::AccessType::ReadWrite,
+        };
+
+        self.prefetch_engine
+            .record_access(prefetching::MemoryAccess {
+                address: address as usize,
+                size,
+                timestamp: Instant::now(),
+                access_type: mapped_type,
+                context_id: 0,
+                kernel_id: None,
+            });
 
         Ok(())
     }
@@ -417,6 +486,94 @@ mod tests {
         let result = manager.start_background_management();
         assert!(result.is_ok());
         assert!(manager.background_enabled);
+    }
+
+    #[test]
+    fn test_evict_memory_reclaims_real_bytes() {
+        use super::eviction_policies::{CacheObject, ObjectPriority, ObjectType, RegionType};
+
+        let config = MemoryManagementConfig::default();
+        let mut manager = IntegratedMemoryManager::new(config);
+
+        let object_size = 4096usize;
+        let mut objects = HashMap::new();
+        objects.insert(
+            0x1000,
+            CacheObject {
+                address: 0x1000,
+                size: object_size,
+                created_at: Instant::now(),
+                last_access: Instant::now(),
+                access_count: 1,
+                access_frequency: 1.0,
+                priority: ObjectPriority::Normal,
+                kernel_context: None,
+                object_type: ObjectType::Data,
+                eviction_cost: 1.0,
+                replacement_cost: 1.0,
+            },
+        );
+        let mut memory_regions = HashMap::new();
+        memory_regions.insert(
+            0x1000,
+            MemoryRegion {
+                base_addr: 0x1000,
+                size: object_size,
+                objects,
+                region_type: RegionType::Buffer,
+                pressure: 1.0,
+                last_eviction: None,
+            },
+        );
+
+        let evicted = manager
+            .evict_memory(object_size, &memory_regions)
+            .expect("eviction against a registered region should succeed");
+        assert_eq!(evicted, object_size);
+        assert_eq!(manager.get_stats().bytes_evicted, object_size as u64);
+        assert_eq!(manager.get_stats().evictions_performed, 1);
+    }
+
+    #[test]
+    fn test_evict_memory_empty_regions_evicts_nothing() {
+        let config = MemoryManagementConfig::default();
+        let mut manager = IntegratedMemoryManager::new(config);
+
+        let evicted = manager
+            .evict_memory(4096, &HashMap::new())
+            .expect("eviction over no regions should still succeed");
+        assert_eq!(evicted, 0);
+    }
+
+    #[test]
+    fn test_prefetch_records_access_and_updates_stats() {
+        let config = MemoryManagementConfig::default();
+        let mut manager = IntegratedMemoryManager::new(config);
+
+        let result = manager.prefetch(std::ptr::null_mut(), 128, Some("sequential"));
+        assert!(result.is_ok());
+        assert_eq!(manager.get_stats().prefetch_requests, 1);
+    }
+
+    #[test]
+    fn test_update_access_pattern_feeds_prefetch_engine() {
+        let config = MemoryManagementConfig::default();
+        let mut manager = IntegratedMemoryManager::new(config);
+
+        // Four consecutive forward accesses (64 bytes apart, same "thread")
+        // form a sequential run of length >= SequentialConfig's
+        // min_sequence_length (3), which should make the engine's
+        // SequentialPrefetcher strategy fire and queue real requests -- proof
+        // that the access data actually reaches the prefetching engine
+        // rather than being dropped on the floor.
+        let base = 0x10000usize;
+        for i in 0..4u64 {
+            let ptr = (base + i as usize * 64) as *mut std::ffi::c_void;
+            let result = manager.update_access_pattern(ptr, 64, AccessType::Sequential);
+            assert!(result.is_ok());
+        }
+
+        assert!(manager.prefetch_engine.get_stats().total_requests > 0);
     }
 
     #[test]

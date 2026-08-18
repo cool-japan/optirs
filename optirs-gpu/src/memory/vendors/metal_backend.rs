@@ -31,10 +31,8 @@
 // are declared for API-shape completeness but nothing in this module ever
 // increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -129,8 +127,6 @@ pub struct MetalMemoryBackend {
     config: MetalConfig,
     /// Device properties
     device_properties: MetalDeviceProperties,
-    /// Active Metal devices
-    devices: HashMap<u32, MetalDevice>,
     /// Memory pools
     memory_pools: HashMap<MetalMemoryType, MetalMemoryPool>,
     /// Statistics
@@ -319,8 +315,6 @@ pub enum MetalCommand {
 pub struct MetalMemoryPool {
     /// Memory type
     memory_type: MetalMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -419,7 +413,6 @@ impl MetalMemoryPool {
 
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -820,7 +813,6 @@ impl MetalMemoryBackend {
         Ok(Self {
             config,
             device_properties,
-            devices: HashMap::new(),
             memory_pools,
             stats: MetalStats::default(),
             command_manager,

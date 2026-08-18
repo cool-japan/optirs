@@ -746,13 +746,27 @@ pub struct MultiObjectiveConfig<T: Float + Debug + Send + Sync + 'static> {
     /// Multi-objective algorithm to use
     pub algorithm: MultiObjectiveAlgorithm,
 
-    /// User preferences for trade-offs
+    /// User preferences for trade-offs.
+    ///
+    /// **Not yet consulted by any optimizer.** Interactive / a-priori preference
+    /// articulation is not implemented: `NSGA2`, `NSGA3`, `MOEADOptimizer` and
+    /// `WeightedSum` all ignore this field. Per-objective trade-offs that *are*
+    /// honoured must be expressed through [`ObjectiveConfig::weight`] and
+    /// [`ObjectiveConfig::direction`], which the weighted-sum scalarizer and the
+    /// dominance comparisons do read.
     pub user_preferences: Option<UserPreferences<T>>,
 
     /// Diversity promotion strategy
     pub diversity_strategy: DiversityStrategy,
 
-    /// Constraint handling method
+    /// Constraint handling method.
+    ///
+    /// **Not yet consulted by any optimizer.** Constrained multi-objective search
+    /// (penalty functions, feasibility rules, epsilon-constraint) is not
+    /// implemented; every optimizer in [`crate::multi_objective`] treats all
+    /// candidates as feasible and leaves `ParetoSolution::constraint_violations`
+    /// empty. Hard resource limits are enforced separately, by
+    /// [`crate::nas_engine::resources::ResourceMonitor`].
     pub constraint_handling: ConstraintHandlingMethod,
 }
 

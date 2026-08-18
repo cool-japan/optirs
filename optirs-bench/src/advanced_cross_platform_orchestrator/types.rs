@@ -591,6 +591,14 @@ pub struct CrossPlatformTestingSummary {
     pub platform_results: HashMap<PlatformTarget, TestResult>,
     pub overall_status: TestStatus,
     pub execution_time: Duration,
+    /// Per-platform performance comparison computed from this run's results.
+    pub performance_comparisons: HashMap<PlatformTarget, PerformanceMetrics>,
+    /// Per-platform performance trend direction detected from this run's results.
+    pub trends: HashMap<PlatformTarget, TrendDirection>,
+    /// Actionable recommendations derived from the compatibility analysis.
+    pub recommendations: Vec<PlatformRecommendation>,
+    /// Breakdown of failing-test issues by platform/category.
+    pub issues_summary: IssueSummary,
 }
 
 /// Environment variables configuration

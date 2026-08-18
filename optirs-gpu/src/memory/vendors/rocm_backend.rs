@@ -30,10 +30,8 @@
 // are declared for API-shape completeness but nothing in this module ever
 // increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -307,8 +305,6 @@ pub enum HipOperationType {
 pub struct RocmMemoryPool {
     /// Memory type
     memory_type: RocmMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -391,7 +387,6 @@ impl RocmMemoryPool {
 
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -578,28 +573,40 @@ impl HipStreamManager {
     }
 
     /// Create new stream
+    /// Create new stream
+    ///
+    /// Reuses a previously [`Self::destroy_stream`]d stream from
+    /// `stream_pool` when one is available (its operation queue is cleared
+    /// and it is given a fresh ID) instead of always allocating a new one.
     pub fn create_stream(&mut self, priority: Option<i32>) -> Result<u32, RocmError> {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
 
-        let stream = HipStream {
+        let mut stream = self.stream_pool.pop_front().unwrap_or_else(|| HipStream {
             handle: std::ptr::null_mut(), // Would be actual HIP stream
             id: stream_id,
             priority: priority.unwrap_or(self.config.default_priority),
             flags: HipStreamFlags::default(),
             created_at: Instant::now(),
             operations: std::collections::VecDeque::new(),
-        };
+        });
+        stream.id = stream_id;
+        stream.priority = priority.unwrap_or(self.config.default_priority);
+        stream.created_at = Instant::now();
+        stream.operations.clear();
 
         self.streams.push(stream);
         Ok(stream_id)
     }
 
     /// Destroy stream
+    ///
+    /// Returns the stream to `stream_pool` for [`Self::create_stream`] to
+    /// reuse instead of dropping it outright.
     pub fn destroy_stream(&mut self, stream_id: u32) -> Result<(), RocmError> {
         if let Some(pos) = self.streams.iter().position(|s| s.id == stream_id) {
             let stream = self.streams.remove(pos);
-            // Clean up stream resources
+            self.stream_pool.push_back(stream);
             Ok(())
         } else {
             Err(RocmError::InvalidStream("Stream not found".to_string()))
@@ -883,7 +890,15 @@ impl RocmMemoryBackend {
         stream_id: u32,
     ) -> Result<(), RocmError> {
         let operation = HipOperation {
-            op_type: HipOperationType::MemcpyAsync,
+            // Mirrors the synchronous `memcpy`'s mapping above so the queued
+            // operation's recorded direction matches what the caller asked
+            // for instead of always reporting a generic `MemcpyAsync`.
+            op_type: match kind {
+                RocmMemcpyKind::HostToDevice => HipOperationType::MemcpyHostToDevice,
+                RocmMemcpyKind::DeviceToHost => HipOperationType::MemcpyDeviceToHost,
+                RocmMemcpyKind::DeviceToDevice => HipOperationType::MemcpyDeviceToDevice,
+                RocmMemcpyKind::HostToHost => HipOperationType::MemcpyAsync,
+            },
             src_ptr: Some(src as *mut c_void),
             dst_ptr: Some(dst),
             size,
@@ -950,13 +965,23 @@ impl RocmMemoryBackend {
     }
 
     /// Query memory attributes
+    ///
+    /// Looks up which pool actually allocated `ptr` and returns that pool's
+    /// real attributes (which vary by [`RocmMemoryType`] — see the
+    /// attribute construction in [`RocmMemoryPool::new`]) instead of an
+    /// unconditional default. A pointer this backend never allocated is an
+    /// honest `Err`, not a guess.
     pub fn query_memory_attributes(
         &self,
         ptr: *mut c_void,
     ) -> Result<RocmMemoryAttributes, RocmError> {
-        // In a real implementation, this would query the actual memory attributes
-        // For now, return default attributes
-        Ok(RocmMemoryAttributes::default())
+        self.memory_pools
+            .values()
+            .find(|pool| pool.allocated_blocks.contains_key(&ptr))
+            .map(|pool| pool.attributes.clone())
+            .ok_or_else(|| {
+                RocmError::InvalidPointer("pointer was not allocated by this backend".to_string())
+            })
     }
 }
 

@@ -17,7 +17,7 @@
 //! This crate has **no intra-workspace dependencies**: `optirs-core` and
 //! `optirs-learned` were declared once but never referenced, and were removed so
 //! `optirs-nas` builds and tests standalone. The benchmark harness in
-//! [`evaluation::benchmark`] implements its optimizer update rules directly, which
+//! [`evaluation::BenchmarkSuite`] implements its optimizer update rules directly, which
 //! also makes NAS scores reproducible independently of sibling-crate changes.
 //!
 //! ## Implementation Status (v0.3.2)
@@ -213,6 +213,7 @@ pub mod hyperparameter;
 pub mod multi_objective;
 pub mod multimodal_nas;
 pub mod nas_engine;
+pub(crate) mod numeric;
 pub mod progressive;
 pub mod search_strategies;
 pub mod speech_nas;

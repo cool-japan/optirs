@@ -185,7 +185,7 @@
 //! ### Production Monitoring
 //!
 //! ```rust
-//! use optirs::core::optimizer_metrics::{MetricsCollector, MetricsReporter};
+//! use optirs::core::optimizer_metrics::MetricsCollector;
 //! use optirs::prelude::*;
 //! use scirs2_core::ndarray::Array1;
 //! use std::time::Instant;
@@ -234,8 +234,11 @@
 //!
 //! - **2,998 unit/integration tests** + **110 doc tests** = **3,108 total tests**
 //!   workspace-wide, `--all-features` (`cargo nextest run` + `cargo test --doc`,
-//!   verified 2026-08-17): 3,098 passed, 14 skipped/ignored, 0 failed
-//! - `cargo check --workspace --all-features --all-targets` is clean
+//!   as of 2026-08-17): 3,098 passed, 14 skipped/ignored, 0 failed
+//! - `cargo check --workspace --all-features --all-targets` was clean as of the
+//!   same date (the workspace has other crates under active development
+//!   between releases; this crate's own `cargo check`/`clippy` are verified
+//!   clean on every change)
 //! - **Comprehensive benchmarks** - Using Criterion.rs
 //! - **Statistical analysis** - For reliable performance metrics
 //!
@@ -276,21 +279,28 @@ pub use optirs_nas as nas;
 #[cfg(feature = "bench")]
 pub use optirs_bench as bench;
 
-/// Common imports for ease of use
-#[allow(ambiguous_glob_reexports)]
+/// Common imports for ease of use.
+///
+/// This intentionally covers only `optirs-core` (optimizers, regularizers,
+/// schedulers), which is always available and whose names are verified not
+/// to collide with one another. The `gpu`/`tpu`/`learned`/`nas` extension
+/// crates are deliberately **not** globbed in here: they are independently
+/// versioned and, with more than one enabled at once, their public names do
+/// collide with `core` and with each other (for example, both
+/// `optirs-core::optimizers` and `optirs-gpu` export a `SparseAdam`, and both
+/// `optirs-learned` and `optirs-nas` export their own `OptimError`/`Result`).
+/// A glob re-export of colliding names is ambiguous and unusable through the
+/// path that introduced the ambiguity (`ambiguous_glob_reexports`), so
+/// pulling them in here would silently break `optirs::prelude::SparseAdam`
+/// (etc.) the moment two of those features are enabled together.
+///
+/// Reach extension-crate types through their own namespace instead, e.g.
+/// `optirs::gpu::GpuAdam`, `optirs::learned::LSTMOptimizer`,
+/// `optirs::nas::ArchitectureSpace`.
 pub mod prelude {
     pub use crate::core::optimizers::*;
     pub use crate::core::regularizers::*;
     pub use crate::core::schedulers::*;
-
-    #[cfg(feature = "gpu")]
-    pub use crate::gpu::*;
-
-    #[cfg(feature = "learned")]
-    pub use crate::learned::*;
-
-    #[cfg(feature = "nas")]
-    pub use crate::nas::*;
 }
 
 // Re-export core functionality at the top level

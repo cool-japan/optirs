@@ -11,37 +11,19 @@ use std::f64::consts::PI;
 use super::constants::WAVELET_MIN_CONCENTRATION;
 use super::types_7::{
     ARIMAFitter, ChangePointDetector, FrequencyCharacteristics, HjorthParameters,
-    HypothesisTestType, PatternEvolution, SeasonalDecomposer, WaveletType,
+    HypothesisTestType, PatternEvolution, WaveletType,
 };
 
-/// Seasonal decomposition methods
-#[derive(Debug, Clone)]
-pub enum DecompositionMethod {
-    /// Additive decomposition
-    Additive,
-    /// Multiplicative decomposition
-    Multiplicative,
-    /// STL decomposition
-    STL,
-    /// X-13ARIMA-SEATS
-    X13ARIMA,
-}
 /// FFT processor for frequency analysis
 #[derive(Debug)]
 pub struct FFTProcessor {
     /// Window function type
     pub(super) window_type: WindowType,
-    /// FFT size
-    pub(super) fft_size: usize,
-    /// Overlap factor
-    pub(super) overlap_factor: f64,
 }
 impl FFTProcessor {
     pub(super) fn new() -> Self {
         Self {
             window_type: WindowType::Hanning,
-            fft_size: 1024,
-            overlap_factor: 0.5,
         }
     }
     pub(super) fn analyze_frequencies(&self, signal: &[f64]) -> Result<Vec<AdvancedMemoryPattern>> {
@@ -148,7 +130,9 @@ impl WaveletProcessor {
             .map(|level| level.detail.iter().map(|d| d * d).sum::<f64>())
             .collect();
         let total: f64 = energies.iter().sum();
-        if !(total > 0.0) {
+        // `total` could in principle be NaN; treat that the same as "no energy"
+        // rather than silently comparing it as greater/less-than 0.0.
+        if total.is_nan() || total <= 0.0 {
             return Ok(patterns);
         }
         let Some((dominant_level, &dominant_energy)) = energies
@@ -388,7 +372,10 @@ impl HypothesisTestEngine {
             ],
         }
     }
-    /// Two-sided p-value of the Mann-Kendall trend test.
+    /// Two-sided p-value of the Mann-Kendall trend test, or `None` when this
+    /// engine was not configured with [`HypothesisTestType::MannKendall`] in
+    /// `test_types` (an engine can be built with a narrower allowlist than
+    /// `new`'s default).
     ///
     /// Delegates to the validated implementation in
     /// `regression_tester::distributions`, which computes a real p-value with tie
@@ -397,6 +384,9 @@ impl HypothesisTestEngine {
     /// there are fewer than three finite points (the test is undefined) or the
     /// series is constant (zero variance).
     pub(super) fn mann_kendall_test(&self, data: &[f64]) -> Option<f64> {
+        if !self.test_types.contains(&HypothesisTestType::MannKendall) {
+            return None;
+        }
         distributions::mann_kendall(data).map(|result| result.p_value)
     }
 }
@@ -485,8 +475,6 @@ pub struct StatisticalConfig {
 pub struct TimeSeriesAnalyzer {
     /// ARIMA model fitter
     pub(super) arima_fitter: ARIMAFitter,
-    /// Seasonal decomposer
-    pub(super) seasonal_decomposer: SeasonalDecomposer,
     /// Change point detector
     pub(super) change_point_detector: ChangePointDetector,
 }
@@ -494,7 +482,6 @@ impl TimeSeriesAnalyzer {
     pub(super) fn new() -> Self {
         Self {
             arima_fitter: ARIMAFitter::new(),
-            seasonal_decomposer: SeasonalDecomposer::new(),
             change_point_detector: ChangePointDetector::new(),
         }
     }
@@ -619,8 +606,6 @@ pub struct AdvancedPatternConfig {
 pub struct PatternDatabase {
     /// Stored patterns
     pub(super) patterns: HashMap<String, AdvancedMemoryPattern>,
-    /// Pattern similarity matrix
-    pub(super) similarity_matrix: HashMap<(String, String), f64>,
     /// Pattern frequency statistics
     pub(super) frequency_stats: HashMap<String, PatternFrequencyStats>,
 }
@@ -628,7 +613,6 @@ impl PatternDatabase {
     pub(super) fn new() -> Self {
         Self {
             patterns: HashMap::new(),
-            similarity_matrix: HashMap::new(),
             frequency_stats: HashMap::new(),
         }
     }
@@ -638,8 +622,6 @@ impl PatternDatabase {
 pub struct FeatureExtractor {
     /// Feature types to extract
     pub(super) feature_types: Vec<FeatureType>,
-    /// Feature scaling parameters
-    pub(super) scaling_params: HashMap<String, (f64, f64)>,
 }
 impl FeatureExtractor {
     pub(super) fn new() -> Self {
@@ -649,7 +631,6 @@ impl FeatureExtractor {
                 FeatureType::FrequencyDomain,
                 FeatureType::TimeDomain,
             ],
-            scaling_params: HashMap::new(),
         }
     }
     pub(super) fn extract_features(&self, data: &[f64]) -> Result<Vec<f64>> {

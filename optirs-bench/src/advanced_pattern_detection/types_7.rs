@@ -12,9 +12,9 @@ use super::functions::{
 };
 use super::types::{
     ARIMAParameters, AdvancedMemoryPattern, AdvancedPatternConfig, AdvancedPatternType,
-    ChangePointAlgorithm, DecompositionMethod, FFTProcessor, FeatureExtractor,
-    HypothesisTestEngine, KalmanFilter, PatternDatabase, PatternFrequencyStats, StatisticalConfig,
-    StatisticalProperties, TimeSeriesAnalyzer, TrendInfo, WaveletProcessor,
+    ChangePointAlgorithm, FFTProcessor, FeatureExtractor, HypothesisTestEngine, KalmanFilter,
+    PatternDatabase, PatternFrequencyStats, StatisticalConfig, StatisticalProperties,
+    TimeSeriesAnalyzer, TrendInfo, WaveletProcessor,
 };
 
 /// Advanced-advanced pattern detector using ML and signal processing
@@ -279,10 +279,16 @@ impl AdvancedPatternDetector {
         Ok(())
     }
     /// Compute anomaly scores for patterns
+    // NOTE: `memorydata` is intentionally unused. Each pattern's anomaly score is
+    // derived from `pattern.strength` vs. its own historical mean, which is already
+    // a complete, self-contained signal; folding the raw series in too (e.g. a
+    // z-score of the latest sample) would be a new anomaly-detection design
+    // decision, not a mechanical use of an existing computation, so it is left as a
+    // tracked gap rather than invented here.
     pub(super) fn compute_anomaly_scores(
         &self,
-        patterns: &mut Vec<AdvancedMemoryPattern>,
-        memorydata: &[f64],
+        patterns: &mut [AdvancedMemoryPattern],
+        _memorydata: &[f64],
     ) -> Result<()> {
         for pattern in patterns.iter_mut() {
             match self.get_historical_pattern_mean(&pattern.pattern_type) {
@@ -367,7 +373,7 @@ impl AdvancedPatternDetector {
     }
 }
 /// Types of hypothesis tests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HypothesisTestType {
     /// Kolmogorov-Smirnov test
     KolmogorovSmirnov,
@@ -428,8 +434,15 @@ impl SignalProcessor {
         patterns.extend(frequency_patterns);
         let wavelet_patterns = self.wavelet_processor.analyze_wavelets(signal)?;
         patterns.extend(wavelet_patterns);
+        // Also run wavelet analysis on the Kalman-denoised signal: patterns
+        // obscured by noise in the raw series (already analyzed above) can
+        // surface once smoothed. `filtered_signal` was previously computed and
+        // discarded entirely (an always-true, always-empty `if` block).
         let filtered_signal = self.kalman_filter.filter(signal)?;
-        if !filtered_signal.is_empty() {}
+        if !filtered_signal.is_empty() {
+            let denoised_patterns = self.wavelet_processor.analyze_wavelets(&filtered_signal)?;
+            patterns.extend(denoised_patterns);
+        }
         Ok(patterns)
     }
 }
@@ -450,21 +463,49 @@ impl ARIMAFitter {
             },
         }
     }
+    /// Fit the "I" (integrated) part of ARIMA(p, d, q) for real -- difference the
+    /// series `self.parameters.d` times to the order this fitter was configured
+    /// with, then regress the (now closer to stationary) result -- rather than
+    /// returning a hardcoded slope/intercept/r_squared/confidence unrelated to
+    /// `data`. This does not fit the AR(p)/MA(q) terms (a genuine ARIMA solver is
+    /// out of scope here); it is a bounded, honest use of the configured order
+    /// instead of a fabricated result.
     pub(super) fn fit_and_analyze(&self, data: &[f64]) -> Result<AdvancedMemoryPattern> {
+        let mut differenced = data.to_vec();
+        for _ in 0..self.parameters.d {
+            if differenced.len() < 2 {
+                break;
+            }
+            differenced = differenced.windows(2).map(|w| w[1] - w[0]).collect();
+        }
+
+        let trend = distributions::linear_regression(&differenced);
+        let (slope, intercept, r_squared) = trend
+            .as_ref()
+            .map(|t| (t.slope, t.intercept, t.r_squared.clamp(0.0, 1.0)))
+            .unwrap_or((0.0, 0.0, 0.0));
+        let confidence = r_squared;
+
         Ok(AdvancedMemoryPattern {
-            id: "arima_pattern".to_string(),
+            id: format!(
+                "arima_pattern_p{}_d{}_q{}",
+                self.parameters.p, self.parameters.d, self.parameters.q
+            ),
             pattern_type: AdvancedPatternType::LinearGrowth {
-                slope: 1.0,
-                intercept: 0.0,
-                r_squared: 0.8,
+                slope,
+                intercept,
+                r_squared,
             },
-            confidence: 0.6,
+            confidence,
             signature: data.to_vec(),
-            description: "ARIMA-fitted pattern".to_string(),
+            description: format!(
+                "ARIMA({}, {}, {})-differenced linear fit",
+                self.parameters.p, self.parameters.d, self.parameters.q
+            ),
             frequency_characteristics: FrequencyCharacteristics::default(),
             statistical_properties: StatisticalProperties::default(),
             anomaly_score: 0.0,
-            strength: 0.6,
+            strength: confidence,
             periodicity: None,
             trend: TrendInfo::default(),
             leak_indicators: Vec::new(),
@@ -527,19 +568,6 @@ pub struct PatternState {
     /// Confidence at this time
     pub confidence: f64,
 }
-/// Seasonal decomposer
-#[derive(Debug)]
-pub struct SeasonalDecomposer {
-    /// Decomposition method
-    pub(super) method: DecompositionMethod,
-}
-impl SeasonalDecomposer {
-    pub(super) fn new() -> Self {
-        Self {
-            method: DecompositionMethod::Additive,
-        }
-    }
-}
 /// Change point detector
 #[derive(Debug)]
 pub struct ChangePointDetector {
@@ -560,10 +588,22 @@ impl ChangePointDetector {
         if data.len() < 10 {
             return Ok(change_points);
         }
+        // Use the configured CUSUM sensitivity when this detector was built with
+        // one (see `Self::new`'s default); PELT/BinarySegmentation/Bayesian are
+        // declared as configurable but not yet implemented as separate algorithms
+        // here, so any of those alone falls back to the same CUSUM-style default.
+        let threshold_multiplier = self
+            .algorithms
+            .iter()
+            .find_map(|algorithm| match algorithm {
+                ChangePointAlgorithm::CUSUM { threshold } => Some(*threshold),
+                _ => None,
+            })
+            .unwrap_or(2.0);
         let mean = data.iter().sum::<f64>() / data.len() as f64;
         let mut cumsum = 0.0;
-        let threshold =
-            2.0 * data.iter().map(|x| (x - mean).abs()).sum::<f64>() / data.len() as f64;
+        let threshold = threshold_multiplier * data.iter().map(|x| (x - mean).abs()).sum::<f64>()
+            / data.len() as f64;
         for (i, &value) in data.iter().enumerate() {
             cumsum += value - mean;
             if cumsum.abs() > threshold {

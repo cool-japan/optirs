@@ -525,21 +525,9 @@ impl DocumentationAnalyzer {
         while let Some(c) = chars.next() {
             match c {
                 '(' | '[' | '{' => stack.push(c),
-                ')' => {
-                    if stack.pop() != Some('(') {
-                        return false;
-                    }
-                }
-                ']' => {
-                    if stack.pop() != Some('[') {
-                        return false;
-                    }
-                }
-                '}' => {
-                    if stack.pop() != Some('{') {
-                        return false;
-                    }
-                }
+                ')' if stack.pop() != Some('(') => return false,
+                ']' if stack.pop() != Some('[') => return false,
+                '}' if stack.pop() != Some('{') => return false,
                 '"' => {
                     // Consume until the closing quote, honoring escapes.
                     let mut closed = false;

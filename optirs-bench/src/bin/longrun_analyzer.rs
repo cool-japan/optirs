@@ -548,33 +548,45 @@ fn main() -> Result<()> {
     let inputpath = PathBuf::from(
         matches
             .get_one::<String>("input")
-            .expect("input argument is required"),
+            .ok_or_else(|| OptimError::InvalidConfig("input argument is required".to_string()))?,
     );
     let outputpath = PathBuf::from(
         matches
             .get_one::<String>("output")
-            .expect("output argument is required"),
+            .ok_or_else(|| OptimError::InvalidConfig("output argument is required".to_string()))?,
     );
-    let format = matches
-        .get_one::<String>("format")
-        .expect("format has default value");
+    let format = matches.get_one::<String>("format").ok_or_else(|| {
+        OptimError::InvalidConfig("format argument has no value or default".to_string())
+    })?;
     let verbose = matches.get_flag("verbose");
 
     let stability_threshold: f64 = matches
         .get_one::<String>("stability-threshold")
-        .expect("stability-threshold has default value")
+        .ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "stability-threshold argument has no value or default".to_string(),
+            )
+        })?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid stability threshold".to_string()))?;
 
     let degradation_threshold: f64 = matches
         .get_one::<String>("degradation-threshold")
-        .expect("degradation-threshold has default value")
+        .ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "degradation-threshold argument has no value or default".to_string(),
+            )
+        })?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid degradation threshold".to_string()))?;
 
     let availability_threshold: f64 = matches
         .get_one::<String>("availability-threshold")
-        .expect("availability-threshold has default value")
+        .ok_or_else(|| {
+            OptimError::InvalidConfig(
+                "availability-threshold argument has no value or default".to_string(),
+            )
+        })?
         .parse()
         .map_err(|_| OptimError::InvalidConfig("Invalid availability threshold".to_string()))?;
 
@@ -1109,7 +1121,7 @@ fn calculate_endurance_score(
 }
 
 #[allow(dead_code)]
-fn analyze_trends(data: &LongRunTestData) -> TrendAnalysis {
+fn analyze_trends(_data: &LongRunTestData) -> TrendAnalysis {
     // Simplified trend analysis
     TrendAnalysis {
         long_term_trends: vec![LongTermTrend {
@@ -1225,7 +1237,7 @@ fn analyze_reliability(data: &LongRunTestData) -> ReliabilityAnalysis {
 #[allow(dead_code)]
 fn calculate_reliability_score(
     availability: &AvailabilityAnalysis,
-    mtbf: &MtbfAnalysis,
+    _mtbf: &MtbfAnalysis,
     fault_tolerance: &FaultToleranceAssessment,
 ) -> f64 {
     let availability_score = availability.overall_availability_percent / 100.0;

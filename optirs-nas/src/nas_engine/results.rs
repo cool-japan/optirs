@@ -3,7 +3,9 @@
 // This module contains all result types, evaluation metrics, statistics tracking,
 // and performance measurement functionality for the Neural Architecture Search system.
 
+use crate::error::Result;
 use crate::multi_objective::ParetoFront;
+use crate::numeric::{count_as, scalar_as};
 use crate::EvaluationMetric;
 use scirs2_core::numeric::Float;
 use serde::{Deserialize, Serialize};
@@ -948,27 +950,40 @@ impl Default for TimeStatistics {
 
 /// Utility functions for results analysis
 impl<T: Float + Debug + Send + Sync + 'static> SearchStatistics<T> {
-    /// Calculate search efficiency score
-    pub fn calculate_efficiency_score(&self) -> T {
+    /// Calculate search efficiency score.
+    ///
+    /// The mean of the evaluation success rate and the evaluations-per-second
+    /// rate. Zero when nothing has been evaluated; the time term is dropped (not
+    /// treated as infinite) when the search has not yet run for a whole second.
+    ///
+    /// Returns an error rather than panicking when a count cannot be represented
+    /// in `T`: the previous `.expect("unwrap failed")` on the elapsed-seconds
+    /// conversion would have aborted a completed search while it was reporting
+    /// its own statistics. The companion `unwrap_or_else(T::zero)` calls were no
+    /// better — a success count silently read as zero turns a perfect search into
+    /// an efficiency of zero.
+    pub fn calculate_efficiency_score(&self) -> Result<T> {
         if self.total_architectures_evaluated == 0 {
-            return T::zero();
+            return Ok(T::zero());
         }
 
-        let success_rate = scirs2_core::numeric::NumCast::from(self.successful_evaluations)
-            .unwrap_or_else(|| T::zero())
-            / scirs2_core::numeric::NumCast::from(self.total_architectures_evaluated)
-                .unwrap_or_else(|| T::zero());
+        let successes: T = count_as(self.successful_evaluations, "successful evaluations")?;
+        let attempts: T = count_as(
+            self.total_architectures_evaluated,
+            "evaluated architectures",
+        )?;
+        let success_rate = successes / attempts;
 
-        let time_efficiency = if self.total_search_time.as_secs() > 0 {
-            scirs2_core::numeric::NumCast::from(self.successful_evaluations)
-                .unwrap_or_else(|| T::zero())
-                / T::from(self.total_search_time.as_secs()).expect("unwrap failed")
+        let elapsed_seconds = self.total_search_time.as_secs();
+        let time_efficiency = if elapsed_seconds > 0 {
+            let seconds: T = count_as(elapsed_seconds as usize, "elapsed search seconds")?;
+            successes / seconds
         } else {
             T::zero()
         };
 
-        (success_rate + time_efficiency)
-            / scirs2_core::numeric::NumCast::from(2.0).unwrap_or_else(|| T::zero())
+        let two: T = scalar_as(2.0, "efficiency averaging divisor")?;
+        Ok((success_rate + time_efficiency) / two)
     }
 
     /// Check if search has converged
@@ -1102,9 +1117,37 @@ mod tests {
             ..Default::default()
         };
 
-        let efficiency = stats.calculate_efficiency_score();
+        let efficiency = stats
+            .calculate_efficiency_score()
+            .expect("counts this small are representable in f32");
         assert!(efficiency > 0.0);
         assert!(efficiency <= 1.0);
+
+        // Nothing evaluated: an honest zero rather than a division by zero.
+        let empty = SearchStatistics::<f32>::default();
+        assert_eq!(
+            empty
+                .calculate_efficiency_score()
+                .expect("an empty search has a defined score"),
+            0.0
+        );
+
+        // A search shorter than one second drops the rate term instead of
+        // treating it as infinite.
+        let brief = SearchStatistics::<f32> {
+            total_architectures_evaluated: 4,
+            successful_evaluations: 4,
+            total_search_time: Duration::from_millis(120),
+            ..Default::default()
+        };
+        assert!(
+            (brief
+                .calculate_efficiency_score()
+                .expect("a sub-second search has a defined score")
+                - 0.5)
+                .abs()
+                < 1e-6
+        );
     }
 
     #[test]

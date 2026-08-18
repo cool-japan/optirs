@@ -7,6 +7,7 @@
 use crate::error::{OptimError, Result};
 use crate::regression_tester::distributions::{sample_variance, welch_t_test};
 use crate::TestFunction;
+use optirs_core::utils::scalar_or;
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
@@ -24,7 +25,6 @@ use super::types::{
 };
 
 use super::crossframeworkbenchmark_type::CrossFrameworkBenchmark;
-use std::collections::HashSet;
 
 impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
     /// Create a new cross-framework benchmark suite
@@ -57,7 +57,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             dimension: 10,
             function: Box::new(|x: &Array1<A>| x.mapv(|val| val * val).sum()),
             gradient: Box::new(|x: &Array1<A>| {
-                x.mapv(|val| A::from(2.0).expect("unwrap failed") * val)
+                x.mapv(|val| scalar_or(2.0, A::one() + A::one()) * val)
             }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::zeros(10)),
@@ -69,17 +69,18 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             dimension: 2,
             function: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).expect("unwrap failed");
+                let b = scalar_or(100.0, A::one());
                 let term1 = (a - x[0]) * (a - x[0]);
                 let term2 = b * (x[1] - x[0] * x[0]) * (x[1] - x[0] * x[0]);
                 term1 + term2
             }),
             gradient: Box::new(|x: &Array1<A>| {
                 let a = A::one();
-                let b = A::from(100.0).expect("unwrap failed");
-                let grad_x = A::from(-2.0).expect("unwrap failed") * (a - x[0])
-                    - A::from(4.0).expect("unwrap failed") * b * x[0] * (x[1] - x[0] * x[0]);
-                let grad_y = A::from(2.0).expect("unwrap failed") * b * (x[1] - x[0] * x[0]);
+                let b = scalar_or(100.0, A::one());
+                let two = A::one() + A::one();
+                let grad_x = scalar_or(-2.0, -two) * (a - x[0])
+                    - scalar_or(4.0, two + two) * b * x[0] * (x[1] - x[0] * x[0]);
+                let grad_y = scalar_or(2.0, two) * b * (x[1] - x[0] * x[0]);
                 Array1::from_vec(vec![grad_x, grad_y])
             }),
             optimal_value: Some(A::zero()),
@@ -93,41 +94,35 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             function: Box::new(|x: &Array1<A>| {
                 let x1 = x[0];
                 let x2 = x[1];
-                let term1 = (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
-                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2);
-                let term2 = (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
-                    * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2);
-                let term3 = (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
-                    * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2);
+                let c1 = scalar_or(1.5, A::one());
+                let c2 = scalar_or(2.25, A::one());
+                let c3 = scalar_or(2.625, A::one());
+                let term1 = (c1 - x1 + x1 * x2) * (c1 - x1 + x1 * x2);
+                let term2 = (c2 - x1 + x1 * x2 * x2) * (c2 - x1 + x1 * x2 * x2);
+                let term3 = (c3 - x1 + x1 * x2 * x2 * x2) * (c3 - x1 + x1 * x2 * x2 * x2);
                 term1 + term2 + term3
             }),
             gradient: Box::new(|x: &Array1<A>| {
                 let x1 = x[0];
                 let x2 = x[1];
-                let dx1 = A::from(2.0).expect("unwrap failed")
-                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
-                    * (x2 - A::one())
-                    + A::from(2.0).expect("unwrap failed")
-                        * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
-                        * (x2 * x2 - A::one())
-                    + A::from(2.0).expect("unwrap failed")
-                        * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
-                        * (x2 * x2 * x2 - A::one());
-                let dx2 = A::from(2.0).expect("unwrap failed")
-                    * (A::from(1.5).expect("unwrap failed") - x1 + x1 * x2)
-                    * x1
-                    + A::from(2.0).expect("unwrap failed")
-                        * (A::from(2.25).expect("unwrap failed") - x1 + x1 * x2 * x2)
-                        * (A::from(2.0).expect("unwrap failed") * x1 * x2)
-                    + A::from(2.0).expect("unwrap failed")
-                        * (A::from(2.625).expect("unwrap failed") - x1 + x1 * x2 * x2 * x2)
-                        * (A::from(3.0).expect("unwrap failed") * x1 * x2 * x2);
+                let two = A::one() + A::one();
+                let c1 = scalar_or(1.5, A::one());
+                let c2 = scalar_or(2.25, A::one());
+                let c3 = scalar_or(2.625, A::one());
+                let dx1 = two * (c1 - x1 + x1 * x2) * (x2 - A::one())
+                    + two * (c2 - x1 + x1 * x2 * x2) * (x2 * x2 - A::one())
+                    + two * (c3 - x1 + x1 * x2 * x2 * x2) * (x2 * x2 * x2 - A::one());
+                let dx2 = two * (c1 - x1 + x1 * x2) * x1
+                    + two * (c2 - x1 + x1 * x2 * x2) * (two * x1 * x2)
+                    + two
+                        * (c3 - x1 + x1 * x2 * x2 * x2)
+                        * (scalar_or(3.0, A::one()) * x1 * x2 * x2);
                 Array1::from_vec(vec![dx1, dx2])
             }),
             optimal_value: Some(A::zero()),
             optimal_point: Some(Array1::from_vec(vec![
-                A::from(3.0).expect("unwrap failed"),
-                A::from(0.5).expect("unwrap failed"),
+                scalar_or(3.0, A::one()),
+                scalar_or(0.5, A::one()),
             ])),
         });
     }
@@ -760,8 +755,8 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
         // CPU counters are not instrumented by this harness; zeros here mean
         // "not measured" and are documented as such on `CpuStats`.
         let cpu_usage = results
-            .iter()
-            .map(|(id, _summary)| (id.clone(), CpuStats::unmeasured()))
+            .keys()
+            .map(|id| (id.clone(), CpuStats::unmeasured()))
             .collect();
 
         let gpu_usage = results
@@ -886,7 +881,7 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
             .iter()
             .map(|&v| (v - mean) * (v - mean))
             .fold(A::zero(), |acc, x| acc + x)
-            / A::from(values.len() - 1).expect("unwrap failed");
+            / scalar_or(values.len() - 1, A::one());
 
         variance.sqrt()
     }
@@ -932,7 +927,12 @@ impl<A: Float + Debug + Send + Sync> CrossFrameworkBenchmark<A> {
 
     /// Student's t cumulative distribution function.
     ///
-    /// Delegates to the shared, table-checked implementation.
+    /// Delegates to the shared, table-checked implementation. Production code
+    /// (`perform_t_test` above) gets its p-value from `welch_t_test` directly and
+    /// never calls this; it exists as a regression-test seam pinning the shared
+    /// CDF's correctness against known table values (see `functions.rs`'s
+    /// `t_distribution_cdf_matches_tables`, F47), hence test-only.
+    #[cfg(test)]
     pub(super) fn t_distribution_cdf(&self, t: f64, df: f64) -> f64 {
         crate::regression_tester::distributions::student_t_cdf(t, df)
     }

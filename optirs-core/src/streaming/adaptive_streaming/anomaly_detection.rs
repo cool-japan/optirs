@@ -206,128 +206,10 @@ pub trait MLAnomalyDetector<A: Float + Send + Sync>: Send + Sync {
     fn name(&self) -> String;
 }
 
-/// Real confusion-matrix counters backing every ML detector's quality metrics.
-///
-/// `predictions`/`flagged` are updated on every scored point (so the observed
-/// flag rate is always available), while the four confusion cells only move
-/// when ground truth is supplied via [`DetectionCounters::record_outcome`].
-#[derive(Debug, Clone, Default)]
-pub struct DetectionCounters {
-    /// Points scored by the detector.
-    pub predictions: usize,
-    /// Points the detector flagged as anomalous.
-    pub flagged: usize,
-    /// Flagged and genuinely anomalous.
-    pub true_positives: usize,
-    /// Flagged but genuinely normal.
-    pub false_positives: usize,
-    /// Not flagged and genuinely normal.
-    pub true_negatives: usize,
-    /// Not flagged but genuinely anomalous.
-    pub false_negatives: usize,
-}
-
-impl DetectionCounters {
-    /// Records that a point was scored, and whether it was flagged.
-    pub fn record_prediction(&mut self, flagged: bool) {
-        self.predictions += 1;
-        if flagged {
-            self.flagged += 1;
-        }
-    }
-
-    /// Records ground truth for one prediction.
-    pub fn record_outcome(&mut self, predicted_anomaly: bool, was_true_anomaly: bool) {
-        match (predicted_anomaly, was_true_anomaly) {
-            (true, true) => self.true_positives += 1,
-            (true, false) => self.false_positives += 1,
-            (false, false) => self.true_negatives += 1,
-            (false, true) => self.false_negatives += 1,
-        }
-    }
-
-    /// Total number of labelled outcomes recorded.
-    pub fn labelled(&self) -> usize {
-        self.true_positives + self.false_positives + self.true_negatives + self.false_negatives
-    }
-
-    /// Fraction of scored points that were flagged, or `None` before any point
-    /// has been scored. This is a real observation, available without labels.
-    pub fn observed_flag_rate(&self) -> Option<f64> {
-        if self.predictions == 0 {
-            None
-        } else {
-            Some(self.flagged as f64 / self.predictions as f64)
-        }
-    }
-
-    /// Derives quality metrics from the recorded confusion matrix.
-    ///
-    /// `auc_roc` is the exact single-operating-point ROC area
-    /// `(TPR + TNR) / 2`, which is all that a one-threshold detector's
-    /// confusion matrix can support; a full curve would need scores retained
-    /// against labels across thresholds.
-    pub fn to_metrics<A: Float + Send + Sync>(
-        &self,
-        detector_name: String,
-        training_time: Duration,
-        inference_time: Duration,
-    ) -> Result<MLModelMetrics<A>, String> {
-        let labelled = self.labelled();
-        if labelled == 0 {
-            return Err(format!(
-                "{detector_name}: no labelled outcomes recorded, so accuracy, \
-                 precision, recall, F1 and AUC are undefined — call \
-                 `record_outcome` with ground truth first"
-            ));
-        }
-
-        let true_positives = self.true_positives as f64;
-        let false_positives = self.false_positives as f64;
-        let true_negatives = self.true_negatives as f64;
-        let false_negatives = self.false_negatives as f64;
-
-        let precision = if true_positives + false_positives > 0.0 {
-            true_positives / (true_positives + false_positives)
-        } else {
-            0.0
-        };
-        let recall = if true_positives + false_negatives > 0.0 {
-            true_positives / (true_positives + false_negatives)
-        } else {
-            0.0
-        };
-        let f1_score = if precision + recall > 0.0 {
-            2.0 * precision * recall / (precision + recall)
-        } else {
-            0.0
-        };
-        let accuracy = (true_positives + true_negatives) / labelled as f64;
-        let false_positive_rate = if false_positives + true_negatives > 0.0 {
-            false_positives / (false_positives + true_negatives)
-        } else {
-            0.0
-        };
-        let true_negative_rate = 1.0 - false_positive_rate;
-        let auc_roc = (recall + true_negative_rate) / 2.0;
-
-        let convert = |value: f64| -> Result<A, String> {
-            A::from(value)
-                .ok_or_else(|| format!("{value} cannot be represented in the element type"))
-        };
-
-        Ok(MLModelMetrics {
-            accuracy: convert(accuracy)?,
-            precision: convert(precision)?,
-            recall: convert(recall)?,
-            f1_score: convert(f1_score)?,
-            auc_roc: convert(auc_roc)?,
-            false_positive_rate: convert(false_positive_rate)?,
-            training_time,
-            inference_time,
-        })
-    }
-}
+// The confusion-matrix counters, the bounded score-retention buffer and the
+// full-curve ROC computation live in `anomaly_scoring`; `DetectionCounters` is
+// re-exported here so its existing path keeps resolving.
+pub use super::anomaly_scoring::DetectionCounters;
 
 /// Result of anomaly detection
 #[derive(Debug, Clone)]
@@ -357,8 +239,16 @@ pub struct MLModelMetrics<A: Float + Send + Sync> {
     pub recall: A,
     /// F1 score
     pub f1_score: A,
-    /// Area under ROC curve
-    pub auc_roc: A,
+    /// Area under the ROC curve, traced over every threshold the retained
+    /// labelled scores admit, or `None` while fewer than two labelled scores of
+    /// either class have been fed back.
+    ///
+    /// This is deliberately optional. A detector's confusion matrix alone fixes
+    /// exactly one point on the ROC curve, so no area can be derived from it;
+    /// the single-operating-point substitute `(TPR + TNR) / 2` that used to be
+    /// reported here was a different statistic wearing the AUC's name. Call
+    /// [`DetectionCounters::auc_roc`] for the reason it is unavailable.
+    pub auc_roc: Option<A>,
     /// False positive rate
     pub false_positive_rate: A,
     /// Training time
@@ -367,37 +257,11 @@ pub struct MLModelMetrics<A: Float + Send + Sync> {
     pub inference_time: Duration,
 }
 
-/// Ensemble anomaly detector combining multiple methods
-pub struct EnsembleAnomalyDetector<A: Float + Send + Sync> {
-    /// Ensemble voting strategy
-    voting_strategy: EnsembleVotingStrategy,
-    /// Per-detector weights used by
-    /// [`EnsembleVotingStrategy::Weighted`]. Detectors with no explicit weight
-    /// count as `1`, so an unconfigured ensemble weights every detector
-    /// equally rather than ignoring them.
-    detector_weights: HashMap<String, A>,
-    /// Ensemble configuration
-    ensemble_config: EnsembleConfig<A>,
-}
-
-/// Ensemble voting strategies
-#[derive(Debug, Clone)]
-pub enum EnsembleVotingStrategy {
-    /// Simple majority voting
-    Majority,
-    /// Weighted voting based on detector performance
-    Weighted,
-    /// Maximum anomaly score
-    MaxScore,
-    /// Average anomaly score
-    AverageScore,
-    /// Median anomaly score
-    MedianScore,
-    /// Adaptive voting based on context
-    Adaptive,
-    /// Stacking with meta-learner
-    Stacking,
-}
+// The ensemble voting detector lives in `anomaly_ensemble`; its types are
+// re-exported here so their existing paths keep resolving.
+pub use super::anomaly_ensemble::{
+    EnsembleAnomalyDetector, EnsembleConfig, EnsembleVotingStrategy,
+};
 
 /// Performance tracking for individual detectors
 #[derive(Debug, Clone)]
@@ -414,21 +278,6 @@ pub struct DetectorPerformance<A: Float + Send + Sync> {
     pub detection_latency: Duration,
     /// Reliability score
     pub reliability_score: A,
-}
-
-/// Ensemble configuration
-#[derive(Debug, Clone)]
-pub struct EnsembleConfig<A: Float + Send + Sync> {
-    /// Minimum number of detectors that must agree
-    pub min_consensus: usize,
-    /// Threshold for ensemble anomaly score
-    pub ensemble_threshold: A,
-    /// Enable dynamic detector weighting
-    pub dynamic_weighting: bool,
-    /// Performance evaluation window
-    pub evaluation_window: usize,
-    /// Enable detector selection based on context
-    pub context_based_selection: bool,
 }
 
 /// Adaptive threshold management system
@@ -1038,6 +887,10 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
         for detector in self.ml_detectors.values_mut() {
             detector.record_outcome(predicted_anomaly, was_true_anomaly);
         }
+        // Every ensemble member is scored against its *own* verdict on the most
+        // recent point, which is what `EnsembleVotingStrategy::Adaptive` needs
+        // to weight them by measured skill.
+        self.ensemble_detector.record_outcome(was_true_anomaly);
         self.false_positive_tracker
             .record_outcome(predicted_anomaly, was_true_anomaly);
 
@@ -1053,6 +906,32 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
     /// Number of confirmed false positives retained by the tracker.
     pub fn confirmed_false_positive_count(&self) -> usize {
         self.false_positive_tracker.confirmed_false_positive_count()
+    }
+
+    /// Selects how the per-detector verdicts are combined.
+    ///
+    /// The constructor builds a `Weighted` ensemble; `Adaptive` is the strategy
+    /// that derives its weights from the ground-truth feedback recorded by
+    /// [`Self::record_detection_outcome`], and was unreachable while no setter
+    /// existed.
+    pub fn set_ensemble_voting_strategy(&mut self, strategy: EnsembleVotingStrategy) {
+        self.ensemble_detector.set_voting_strategy(strategy);
+    }
+
+    /// Sets the weight [`EnsembleVotingStrategy::Weighted`] gives one detector.
+    ///
+    /// Without this the configured-weight strategy had no way to be configured,
+    /// so it always fell back to the uniform weight of one.
+    pub fn set_detector_weight(&mut self, detector_name: &str, weight: A) {
+        self.ensemble_detector
+            .set_detector_weight(detector_name, weight);
+    }
+
+    /// Balanced accuracy measured for one ensemble member, or `None` before any
+    /// ground truth has been recorded for it.
+    pub fn detector_balanced_accuracy(&self, detector_name: &str) -> Option<f64> {
+        self.ensemble_detector
+            .detector_balanced_accuracy(detector_name)
     }
 
     /// Number of response executions the response system has recorded.
@@ -1445,134 +1324,6 @@ impl<A: Float + Default + Clone + std::iter::Sum + Send + Sync + 'static> Anomal
 // their input.
 
 // Simplified implementations for supporting structures
-
-impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> EnsembleAnomalyDetector<A> {
-    fn new(voting_strategy: EnsembleVotingStrategy) -> Result<Self, String> {
-        Ok(Self {
-            voting_strategy,
-            detector_weights: HashMap::new(),
-            ensemble_config: EnsembleConfig {
-                min_consensus: 2,
-                ensemble_threshold: try_scalar_str::<A, _>(0.5)?,
-                dynamic_weighting: true,
-                evaluation_window: 100,
-                context_based_selection: false,
-            },
-        })
-    }
-
-    fn combine_results(
-        &mut self,
-        results: HashMap<String, AnomalyDetectionResult<A>>,
-    ) -> Result<AnomalyDetectionResult<A>, String> {
-        if results.is_empty() {
-            return Ok(AnomalyDetectionResult {
-                is_anomaly: false,
-                anomaly_score: A::zero(),
-                confidence: A::zero(),
-                anomaly_type: None,
-                severity: AnomalySeverity::Low,
-                metadata: HashMap::new(),
-            });
-        }
-
-        let anomaly_count = results.values().filter(|r| r.is_anomaly).count();
-        let total_count = results.len();
-
-        let avg_score = results.values().map(|r| r.anomaly_score).sum::<A>()
-            / try_scalar_str::<A, _>(total_count)?;
-        let avg_confidence = results.values().map(|r| r.confidence).sum::<A>()
-            / try_scalar_str::<A, _>(total_count)?;
-
-        // The ensemble the detector actually builds is `Weighted`, which used
-        // to fall through to the `_` arm and behave as plain min-consensus
-        // voting -- the weights were never consulted at all. Each strategy now
-        // computes the quantity it names, and the two that have no
-        // implementation behind them say so instead of silently pretending to
-        // be a different strategy.
-        let threshold = self.ensemble_config.ensemble_threshold;
-        let (is_anomaly, ensemble_score) = match self.voting_strategy {
-            EnsembleVotingStrategy::Majority => (anomaly_count > total_count / 2, avg_score),
-            EnsembleVotingStrategy::MaxScore => {
-                let max_score = results
-                    .values()
-                    .map(|r| r.anomaly_score)
-                    .fold(A::zero(), |acc, s| if s > acc { s } else { acc });
-                (max_score > threshold, max_score)
-            }
-            EnsembleVotingStrategy::AverageScore => (avg_score > threshold, avg_score),
-            EnsembleVotingStrategy::MedianScore => {
-                let mut scores: Vec<A> = results.values().map(|r| r.anomaly_score).collect();
-                scores.sort_by(crate::utils::total_order);
-                let median = if scores.len().is_multiple_of(2) {
-                    (scores[scores.len() / 2 - 1] + scores[scores.len() / 2])
-                        / try_scalar_str::<A, _>(2.0)?
-                } else {
-                    scores[scores.len() / 2]
-                };
-                (median > threshold, median)
-            }
-            EnsembleVotingStrategy::Weighted => {
-                let one = A::one();
-                let mut weight_sum = A::zero();
-                let mut weighted_score = A::zero();
-                let mut weighted_votes = A::zero();
-                for (name, result) in &results {
-                    let weight = *self.detector_weights.get(name).unwrap_or(&one);
-                    weight_sum = weight_sum + weight;
-                    weighted_score = weighted_score + weight * result.anomaly_score;
-                    if result.is_anomaly {
-                        weighted_votes = weighted_votes + weight;
-                    }
-                }
-                if weight_sum <= A::zero() {
-                    return Err(
-                        "weighted ensemble voting needs a positive total detector weight"
-                            .to_string(),
-                    );
-                }
-                let score = weighted_score / weight_sum;
-                let vote_share = weighted_votes / weight_sum;
-                (vote_share > try_scalar_str::<A, _>(0.5)?, score)
-            }
-            EnsembleVotingStrategy::Adaptive | EnsembleVotingStrategy::Stacking => {
-                return Err(format!(
-                    "ensemble voting strategy {:?} is not implemented: it needs a \
-                     context model / meta-learner that this detector does not carry",
-                    self.voting_strategy
-                ));
-            }
-        };
-        let avg_score = ensemble_score;
-
-        Ok(AnomalyDetectionResult {
-            is_anomaly,
-            anomaly_score: avg_score,
-            confidence: avg_confidence,
-            anomaly_type: if is_anomaly {
-                Some(AnomalyType::StatisticalOutlier)
-            } else {
-                None
-            },
-            severity: if avg_score > try_scalar_str::<A, _>(0.8)? {
-                AnomalySeverity::High
-            } else if avg_score > try_scalar_str::<A, _>(0.5)? {
-                AnomalySeverity::Medium
-            } else {
-                AnomalySeverity::Low
-            },
-            metadata: HashMap::new(),
-        })
-    }
-
-    fn adjust_sensitivity(&mut self, adjustment: A) -> Result<(), String> {
-        self.ensemble_config.ensemble_threshold = (self.ensemble_config.ensemble_threshold
-            + adjustment)
-            .max(try_scalar_str::<A, _>(0.1)?)
-            .min(try_scalar_str::<A, _>(0.9)?);
-        Ok(())
-    }
-}
 
 impl<A: Float + Default + Clone + Send + Sync + Send + Sync> AdaptiveThresholdManager<A> {
     fn new() -> Result<Self, String> {

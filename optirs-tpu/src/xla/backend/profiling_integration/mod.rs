@@ -1139,6 +1139,20 @@ impl<T: Float + Debug + Send + Sync + 'static> ProfilingIntegration<T> {
         );
     }
 
+    /// Capture a usage snapshot of the reservations currently live, carrying
+    /// the allocator's real fragmentation. A no-op when memory profiling is
+    /// disabled.
+    ///
+    /// Call this *while* the memory is held: a snapshot taken after release
+    /// records an empty live set, so a series built only from post-release
+    /// snapshots is structurally empty regardless of real activity.
+    pub fn capture_memory_snapshot(&mut self, fragmentation: FragmentationInfo) {
+        if !self.config.enable_memory_profiling {
+            return;
+        }
+        self.memory_profiler.capture_snapshot(fragmentation);
+    }
+
     /// Companion to [`Self::record_memory_allocation`] for the release side,
     /// followed by a usage snapshot carrying the allocator's real
     /// fragmentation. A no-op when memory profiling is disabled.
@@ -1567,6 +1581,11 @@ impl MemoryProfiler {
     /// Number of allocation events recorded so far.
     pub fn recorded_events(&self) -> usize {
         self.allocation_tracker.allocation_history.len()
+    }
+
+    /// Usage snapshots captured so far, oldest first.
+    pub fn usage_snapshots(&self) -> &[MemorySnapshot] {
+        &self.usage_snapshots
     }
 
     fn session_mut(&mut self, session_id: &str) -> &mut MemoryTrackingSession {

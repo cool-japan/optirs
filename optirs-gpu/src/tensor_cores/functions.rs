@@ -1,18 +1,20 @@
 //! Auto-generated module
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
-
-use super::types::{
-    SparseTensorCoreMatrix, TensorCoreBatch, TensorCoreConfig, TensorCoreOperationType,
-    TensorCoreOptimizer, TensorCorePrecision,
-};
+//!
+//! SplitRS carved this file out with no free-standing functions left in it
+//! (see the sibling `*_traits` modules for the same pattern) — only the test
+//! module below survived the split, so the types it exercises are imported
+//! directly by that module rather than re-declared at file scope with
+//! nothing to use them.
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::tensor_cores::types::{
         HardwareUtilizationState, MixedPrecisionTrainer, PerformanceTargets, ResourceRequirements,
-        TensorCoreOpType, TensorCoreOperation, TensorCoreWorkload, WorkloadConstraints,
+        SparseTensorCoreMatrix, TensorCoreBatch, TensorCoreConfig, TensorCoreOpType,
+        TensorCoreOperation, TensorCoreOperationType, TensorCoreOptimizer, TensorCorePrecision,
+        TensorCoreWorkload, WorkloadConstraints,
     };
     use scirs2_core::ndarray::Array2;
 

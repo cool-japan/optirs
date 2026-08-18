@@ -56,7 +56,7 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::multimodal_nas::{MultimodalEvaluation, MultimodalNasEngine};
 //! use scirs2_core::random::Random;
 //!

@@ -1102,7 +1102,7 @@ impl CrossPlatformTester {
                     .iter()
                     .map(|(platform, &score)| (platform.clone(), score))
                     .collect();
-                performance_ranking.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("unwrap failed"));
+                performance_ranking.sort_by(|a, b| b.1.total_cmp(&a.1));
 
                 comparisons.push(PerformanceComparison {
                     test_name,
@@ -1413,9 +1413,9 @@ impl PlatformDetector {
                     | InstructionSet::SSE4_1
                     | InstructionSet::SSE4_2
             )
-        }) {
-            128
-        } else if instruction_sets.contains(&InstructionSet::NEON) {
+        }) || instruction_sets.contains(&InstructionSet::NEON)
+        {
+            // Both the widest SSE family (x86) and NEON (ARM) are 128-bit.
             128
         } else {
             0
@@ -1863,7 +1863,9 @@ impl CrossPlatformTest for OptimizerConsistencyTest {
     }
 }
 
-// Define remaining test implementations with similar structure
+// Each generated test runs the same real smoke check as `BasicFunctionalityTest`
+// (genuine SGD steps, genuinely measured metrics) instead of the unconditional
+// `TestStatus::Passed` + fixed constants this used to return unconditionally.
 macro_rules! impl_test {
     ($name:ident, $test_name:expr, $category:expr) => {
         #[derive(Debug)]
@@ -1877,18 +1879,18 @@ macro_rules! impl_test {
 
         impl CrossPlatformTest for $name {
             fn run_test(&self, _platforminfo: &PlatformInfo) -> TestResult {
+                let (success, error_message, execution_time, performance_metrics) =
+                    run_smoke_optimizer_check(100);
                 TestResult {
                     test_name: self.name().to_string(),
-                    status: TestStatus::Passed,
-                    execution_time: Duration::from_millis(50),
-                    performance_metrics: PerformanceMetrics {
-                        throughput: 800.0,
-                        latency: 0.001,
-                        memory_usage: 1024 * 1024,
-                        cpu_usage: 12.0,
-                        energy_consumption: None,
+                    status: if success {
+                        TestStatus::Passed
+                    } else {
+                        TestStatus::Failed
                     },
-                    error_message: None,
+                    execution_time,
+                    performance_metrics,
+                    error_message,
                     platform_details: HashMap::new(),
                     numerical_results: None,
                 }

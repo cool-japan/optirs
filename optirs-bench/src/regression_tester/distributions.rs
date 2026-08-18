@@ -26,7 +26,7 @@ pub fn ln_gamma(x: f64) -> f64 {
     const COEFFICIENTS: [f64; 9] = [
         0.999_999_999_999_809_9,
         676.520_368_121_885_1,
-        -1259.139_216_722_402_8,
+        -1_259.139_216_722_402_8,
         771.323_428_777_653_1,
         -176.615_029_162_140_6,
         12.507_343_278_686_905,
@@ -1148,7 +1148,9 @@ pub fn binary_segmentation(
         let Some(test) = welch_t_test(after, before) else {
             continue;
         };
-        if !(test.p_value < significance_level) {
+        // A NaN p-value is not usable evidence of a change point either, so it
+        // must also be skipped rather than silently compared as less/greater.
+        if test.p_value.is_nan() || test.p_value >= significance_level {
             continue;
         }
 

@@ -192,7 +192,6 @@ pub(super) fn pairwise_top_k_products(
     y: &Array1<f64>,
     top_k: usize,
 ) -> Array2<f64> {
-    let n_rows = x.nrows();
     let n_cols = x.ncols();
     let k = top_k.min(n_cols);
     if k == 0 {

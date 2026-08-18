@@ -29,7 +29,6 @@
 use crate::error::{OptimError, Result};
 use crate::nas_engine::{MultiObjectiveConfig, OptimizerArchitecture, SearchResult};
 use scirs2_core::numeric::Float;
-use scirs2_core::RngExt;
 use std::fmt::Debug;
 
 use super::core::{

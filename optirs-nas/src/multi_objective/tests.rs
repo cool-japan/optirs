@@ -5,7 +5,6 @@ use crate::nas_engine::{
     OptimizerArchitecture, SearchResult,
 };
 use crate::EvaluationMetric;
-use scirs2_core::RngExt;
 use std::collections::HashMap;
 
 use super::*;
@@ -382,6 +381,37 @@ mod tests_2 {
         ids.sort();
         assert_eq!(ids, vec!["A".to_string(), "B".to_string()]);
         assert_eq!(front.metrics.num_solutions, 2);
+    }
+
+    #[test]
+    fn test_nsga2_population_stays_bounded_and_keeps_the_best() {
+        // NSGA-II's environmental selection existed but was never called, so the
+        // population grew by one individual per new architecture id — 200 results
+        // used to leave a "population of 4" holding 200 individuals.
+        let mut nsga2 = NSGA2::<f64>::new(4, 0.9, 0.1);
+        nsga2.initialize(&two_objective_config()).expect("init");
+
+        for i in 0..200 {
+            let value = 10.0 - i as f64 * 0.05;
+            nsga2
+                .update_pareto_front(&[result_with_id(&format!("cand_{i}"), value, value)])
+                .expect("update");
+            assert!(
+                nsga2.population.len() <= 4,
+                "population grew past its configured size at step {i}: {}",
+                nsga2.population.len()
+            );
+        }
+
+        // Truncation keeps the best-ranked individuals, so the last (and best)
+        // candidate must have survived and must be the published front.
+        assert!(nsga2
+            .population
+            .iter()
+            .any(|ind| ind.architecture.architecture_id == "cand_199"));
+        let front = nsga2.get_pareto_front();
+        assert_eq!(front.solutions.len(), 1);
+        assert_eq!(front.solutions[0].architecture.architecture_id, "cand_199");
     }
 
     #[test]

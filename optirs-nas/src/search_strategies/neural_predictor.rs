@@ -3,11 +3,10 @@
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
 use crate::EvaluationMetric;
 
@@ -19,6 +18,8 @@ pub struct NeuralPredictorSearch<T: Float + Debug + Send + Sync + 'static> {
     predictor_network: PredictorNetwork<T>,
     architecture_encoder: ArchitectureEncoder<T>,
     search_optimizer: SearchOptimizer<T>,
+    /// Confidence the predictor must reach before its point estimates are
+    /// trusted; see [`NeuralPredictorSearch::predictions_are_trusted`].
     confidence_threshold: T,
     statistics: SearchStrategyStatistics<T>,
     uncertainty_sampling: bool,
@@ -74,7 +75,7 @@ pub enum ActivationFunction {
 /// Architecture encoder for neural predictor.
 ///
 /// The encoding is a deterministic vocabulary lookup (see
-/// [`encode_component_block`]); the previous `encoding_weights: Array2::zeros(..)`
+/// `encode_component_block`); the previous `encoding_weights: Array2::zeros(..)`
 /// field was never read by `encode` and has been removed rather than left as dead
 /// state suggesting a learned projection that does not exist.
 #[derive(Debug)]
@@ -135,6 +136,47 @@ impl<
             rng: Random::seed(scirs2_core::random::random::<u64>()),
             training_epochs: DEFAULT_PREDICTOR_EPOCHS,
         }
+    }
+
+    /// Confidence the predictor must reach before its point estimates are trusted.
+    pub fn confidence_threshold(&self) -> T {
+        self.confidence_threshold
+    }
+
+    /// Set the confidence the predictor must reach before its point estimates are
+    /// trusted.
+    ///
+    /// Rejects values outside `[0, 1]`: confidence is a probability-like quantity
+    /// and silently clamping an out-of-range threshold would hide a configuration
+    /// mistake behind plausible-looking behaviour.
+    pub fn set_confidence_threshold(&mut self, threshold: T) -> Result<()> {
+        if !(threshold >= T::zero() && threshold <= T::one()) {
+            return Err(OptimError::InvalidParameter(format!(
+                "confidence threshold must lie in [0, 1], got {:?}",
+                threshold
+            )));
+        }
+        self.confidence_threshold = threshold;
+        Ok(())
+    }
+
+    /// Whether the predictor's point estimates are trusted for a candidate pool
+    /// whose mean Monte-Carlo-dropout spread is `mean_uncertainty`.
+    ///
+    /// Confidence is `1 / (1 + mean_uncertainty)`: one when the stochastic passes
+    /// agree exactly, falling towards zero as they disagree. The threshold used to
+    /// be a constructor argument that nothing read, so a caller asking for a
+    /// cautious predictor got the same exploratory behaviour as one asking for a
+    /// confident one.
+    pub fn predictions_are_trusted(&self, mean_uncertainty: T) -> bool {
+        let spread = if mean_uncertainty.is_finite() {
+            mean_uncertainty.max(T::zero())
+        } else {
+            // A non-finite spread is the least trustworthy state there is.
+            return false;
+        };
+        let confidence = T::one() / (T::one() + spread);
+        confidence >= self.confidence_threshold
     }
 
     /// Make dropout sampling and the training shuffle reproducible.
@@ -242,21 +284,39 @@ impl<
             candidates.push(random_search.generate_architecture(searchspace, &VecDeque::new())?);
         }
 
-        // Select candidate with highest uncertainty (for exploration) or highest predicted
-        // performance (for exploitation)
-        let mut best_candidate = candidates[0].clone();
-        let mut best_score = T::neg_infinity();
-
+        // Score every candidate once, then decide *one* selection rule for the whole
+        // pool: mixing two scoring scales across candidates would make the argmax
+        // meaningless.
+        let mut scored: Vec<(OptimizerArchitecture<T>, T, T)> =
+            Vec::with_capacity(candidates.len());
+        let mut total_uncertainty = T::zero();
         for candidate in candidates {
             let (predicted_perf, uncertainty) = self.predict_performance(&candidate)?;
+            total_uncertainty = total_uncertainty + uncertainty;
+            scored.push((candidate, predicted_perf, uncertainty));
+        }
 
-            // Combine prediction and uncertainty for selection
-            let score = if self.uncertainty_sampling {
-                predicted_perf + uncertainty // UCB-style selection
+        let count: T =
+            scirs2_core::numeric::NumCast::from(scored.len() as f64).unwrap_or_else(T::one);
+        let mean_uncertainty = if count > T::zero() {
+            total_uncertainty / count
+        } else {
+            T::zero()
+        };
+
+        // Exploit the predictor when it is confident enough (or when uncertainty
+        // sampling is switched off); otherwise use the UCB score, which is what
+        // pushes the search towards regions the predictor does not yet know.
+        let exploit = !self.uncertainty_sampling || self.predictions_are_trusted(mean_uncertainty);
+
+        let mut best_candidate = scored[0].0.clone();
+        let mut best_score = T::neg_infinity();
+        for (candidate, predicted_perf, uncertainty) in scored {
+            let score = if exploit {
+                predicted_perf
             } else {
-                predicted_perf // Pure exploitation
+                predicted_perf + uncertainty
             };
-
             if score > best_score {
                 best_score = score;
                 best_candidate = candidate;
@@ -818,7 +878,7 @@ impl<T: Float + Debug + Send + Sync + 'static + Default + Clone> ArchitectureEnc
 /// across every search strategy.  The order is fixed (matching the enum's
 /// declaration order) so the produced encoding is deterministic and stable
 /// across runs and builds.  A trailing out-of-vocabulary slot (added by
-/// [`encode_component_block`]) absorbs any unrecognised name.
+/// `encode_component_block`) absorbs any unrecognised name.
 const COMPONENT_VOCABULARY: [&str; 41] = [
     "SGD",
     "Adam",
@@ -867,7 +927,7 @@ const COMPONENT_VOCABULARY: [&str; 41] = [
 const COMPONENT_DESCRIPTOR_COUNT: usize = 3;
 
 /// Total fixed length of the component feature block produced by
-/// [`encode_component_block`]: one slot per known type, one out-of-vocabulary
+/// `encode_component_block`: one slot per known type, one out-of-vocabulary
 /// slot, and the trailing continuous descriptors.
 const COMPONENT_BLOCK_LEN: usize = COMPONENT_VOCABULARY.len() + 1 + COMPONENT_DESCRIPTOR_COUNT;
 
@@ -1412,5 +1472,39 @@ mod tests {
         let sgd_idx = component_vocab_index("SGD");
         assert_eq!(block[adam_idx], 2.0);
         assert_eq!(block[sgd_idx], 1.0);
+    }
+
+    #[test]
+    fn the_confidence_threshold_decides_whether_predictions_are_trusted() {
+        let mut search = NeuralPredictorSearch::<f64>::new(vec![64, 16, 1], 64, 0.5);
+        assert!((search.confidence_threshold() - 0.5).abs() < 1e-12);
+
+        // confidence = 1 / (1 + spread): a spread of 1.0 gives exactly 0.5.
+        assert!(search.predictions_are_trusted(0.0));
+        assert!(search.predictions_are_trusted(1.0));
+        assert!(!search.predictions_are_trusted(1.5));
+        // A non-finite spread is never trusted.
+        assert!(!search.predictions_are_trusted(f64::NAN));
+        assert!(!search.predictions_are_trusted(f64::INFINITY));
+
+        // A threshold of zero trusts anything; one trusts only exact agreement.
+        search
+            .set_confidence_threshold(0.0)
+            .expect("0 is a valid threshold");
+        assert!(search.predictions_are_trusted(1000.0));
+        search
+            .set_confidence_threshold(1.0)
+            .expect("1 is a valid threshold");
+        assert!(search.predictions_are_trusted(0.0));
+        assert!(!search.predictions_are_trusted(1e-6));
+
+        // Out-of-range thresholds are rejected, and the stored value is unchanged.
+        for bad in [-0.1, 1.1, f64::NAN] {
+            assert!(
+                search.set_confidence_threshold(bad).is_err(),
+                "threshold {bad} must be rejected"
+            );
+        }
+        assert!((search.confidence_threshold() - 1.0).abs() < 1e-12);
     }
 }

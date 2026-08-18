@@ -9,9 +9,18 @@
 //!
 //! The MSL half is checked by compiling through a real Metal `GpuContext`.
 
+// Every item below is only used by the `wgpu`/`metal`-gated tests further
+// down this file; under a feature set with neither (e.g.
+// `--no-default-features`) none of those tests compile, so these would
+// otherwise be unused.
+#[cfg(any(feature = "wgpu", feature = "metal"))]
 use optirs_gpu::shaders::{CollectiveKernel, OptimizerKernel};
-use scirs2_core::gpu::{GpuBackend, GpuContext};
+#[cfg(any(feature = "wgpu", feature = "metal"))]
+use scirs2_core::gpu::GpuBackend;
+#[cfg(feature = "metal")]
+use scirs2_core::gpu::GpuContext;
 
+#[cfg(any(feature = "wgpu", feature = "metal"))]
 const ALL: [OptimizerKernel; 6] = [
     OptimizerKernel::Adam,
     OptimizerKernel::AdamW,
@@ -21,6 +30,7 @@ const ALL: [OptimizerKernel; 6] = [
     OptimizerKernel::Lamb,
 ];
 
+#[cfg(any(feature = "wgpu", feature = "metal"))]
 const COLLECTIVE_ALL: [CollectiveKernel; 1] = [CollectiveKernel::AllReduceMean];
 
 /// Compile every WGSL kernel with `naga` + `wgpu`.

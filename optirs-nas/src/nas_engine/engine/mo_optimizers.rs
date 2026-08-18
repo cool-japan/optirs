@@ -1,8 +1,8 @@
 //! MultiObjectiveOptimizer implementations for the engine.
 //!
 //! Every adapter here delegates to a real algorithm in [`crate::multi_objective`]:
-//! [`NSGA2Optimizer`] to `NSGA2`, [`WeightedSumOptimizer`] to `WeightedSum`,
-//! [`NSGA3Optimizer`] to `NSGA3`, and [`MOEADAdapter`] to `MOEADOptimizer`. (The
+//! `NSGA2Optimizer` to `NSGA2`, `WeightedSumOptimizer` to `WeightedSum`,
+//! `NSGA3Optimizer` to `NSGA3`, and `MOEADAdapter` to `MOEADOptimizer`. (The
 //! MOEA/D wrapper is not called `MOEADOptimizer` only because the algorithm it
 //! wraps already carries that name.)
 //!
@@ -20,10 +20,8 @@
 use crate::error::Result;
 use crate::multi_objective;
 use crate::nas_engine::config::*;
-use crate::nas_engine::resources::*;
 use crate::nas_engine::results::*;
 use scirs2_core::numeric::Float;
-use scirs2_core::RngExt;
 use std::fmt::Debug;
 
 use super::support::MultiObjectiveOptimizer;

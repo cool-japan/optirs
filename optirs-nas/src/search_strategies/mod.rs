@@ -15,7 +15,6 @@ use scirs2_core::numeric::Float;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
-#[allow(unused_imports)]
 use crate::error::Result;
 use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
 

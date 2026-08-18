@@ -2,8 +2,13 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports (this module currently has no non-test functions).
+#[cfg(test)]
 use super::constants::MISSING_DEPENDENCY_MARKER;
+#[cfg(test)]
 use super::crossframeworkbenchmark_type::CrossFrameworkBenchmark;
+#[cfg(test)]
 use super::types::{
     CrossFrameworkConfig, ExternalFrameworkOutcome, Framework, OptimizerIdentifier, Precision,
     PythonScriptTemplates,
@@ -72,11 +77,13 @@ pub(super) mod tests {
     }
 
     fn test_benchmark() -> CrossFrameworkBenchmark<f64> {
-        let mut config = CrossFrameworkConfig::default();
-        config.temp_dir = std::env::temp_dir()
-            .join("optirs_cross_framework_tests")
-            .to_string_lossy()
-            .into_owned();
+        let config = CrossFrameworkConfig {
+            temp_dir: std::env::temp_dir()
+                .join("optirs_cross_framework_tests")
+                .to_string_lossy()
+                .into_owned(),
+            ..Default::default()
+        };
         CrossFrameworkBenchmark::<f64>::new(config).expect("temp dir is creatable")
     }
 
@@ -259,12 +266,14 @@ pub(super) mod tests {
     /// F43/F44: a missing interpreter must skip the comparison explicitly.
     #[test]
     fn missing_python_interpreter_is_skipped_not_faked() {
-        let mut config = CrossFrameworkConfig::default();
-        config.temp_dir = std::env::temp_dir()
-            .join("optirs_cross_framework_missing_python")
-            .to_string_lossy()
-            .into_owned();
-        config.python_path = "optirs-definitely-not-a-real-python-interpreter".to_string();
+        let config = CrossFrameworkConfig {
+            temp_dir: std::env::temp_dir()
+                .join("optirs_cross_framework_missing_python")
+                .to_string_lossy()
+                .into_owned(),
+            python_path: "optirs-definitely-not-a-real-python-interpreter".to_string(),
+            ..Default::default()
+        };
         let benchmark = CrossFrameworkBenchmark::<f64>::new(config).expect("temp dir is creatable");
 
         let mut functions = CrossFrameworkBenchmark::<f64>::new(CrossFrameworkConfig {

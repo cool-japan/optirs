@@ -3,18 +3,17 @@
 use crate::nas_engine::config::*;
 use crate::nas_engine::resources::*;
 use crate::nas_engine::results::*;
-use crate::EvaluationMetric;
-use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use super::*;
-// Test-only visibility into the engine's private strategy/optimizer/controller
-// adapters (RandomStrategy, EvolutionaryStrategy, NSGA2Optimizer, ...). These
-// are `pub(super)` in their defining submodules (visible anywhere under
-// `engine`); `engine::mod` does not re-export them (they were never part of
-// the module's public API), so the tests import them directly here instead.
-use super::controller::*;
+// Test-only visibility into the engine's private strategy/optimizer adapters
+// (RandomStrategy, EvolutionaryStrategy, NSGA2Optimizer, ...). These are
+// `pub(super)` in their defining submodules (visible anywhere under `engine`);
+// `engine::mod` does not re-export them (they were never part of the module's
+// public API), so the tests import them directly here instead.
+// (`super::controller` is not imported: nothing in this module names a type from
+// it, and a glob that resolves to nothing is a warning.)
 use super::mo_optimizers::*;
 use super::strategies::*;
 

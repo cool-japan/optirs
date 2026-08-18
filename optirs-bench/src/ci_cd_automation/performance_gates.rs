@@ -5,17 +5,13 @@
 // regressions are caught before deployment.
 
 use crate::error::{OptimError, Result};
-use crate::performance_regression_detector::{
-    MetricType as RegressionMetricType, MetricValue, PerformanceMeasurement,
-};
 use crate::regression_tester::distributions::{linear_regression, welch_t_test_summary};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use super::config::{
-    ComparisonOperator, GateEvaluationStrategy, GateFailureAction, GateFailureHandling,
-    GateFailureNotificationConfig, GateSeverity, GateType, MetricGate, MetricType,
+    ComparisonOperator, GateFailureAction, GateSeverity, GateType, MetricGate, MetricType,
     PerformanceGatesConfig,
 };
 use super::test_execution::{CiCdTestResult, TestSuiteStatistics};
@@ -554,10 +550,17 @@ impl PerformanceGateEvaluator {
     }
 
     /// Evaluate performance gates against test results
+    // NOTE: `statistics` is intentionally unused. Every configured gate reads a
+    // `MetricType` (a performance metric: latency/throughput/memory/...) via
+    // `self.config.metric_gates`; there is no gate category over aggregate test
+    // pass/fail counts (`GateType` is Absolute/Relative/Statistical/Trend, all
+    // metric-valued) for `statistics` to feed. Adding one would be a new gate
+    // category, not a mechanical use of this parameter, so it is left as a
+    // tracked gap.
     pub fn evaluate_gates(
         &mut self,
         test_results: &[CiCdTestResult],
-        statistics: &TestSuiteStatistics,
+        _statistics: &TestSuiteStatistics,
     ) -> Result<GateResult> {
         let evaluation_id = uuid::Uuid::new_v4().to_string();
         let start_time = SystemTime::now();
@@ -713,18 +716,6 @@ impl PerformanceGateEvaluator {
                 )
             })
             .collect()
-    }
-
-    /// Extract performance metrics from test results.
-    ///
-    /// Retained for callers that only need the aggregates.
-    fn extract_metrics_from_results(
-        &self,
-        test_results: &[CiCdTestResult],
-    ) -> Result<HashMap<MetricType, f64>> {
-        Ok(Self::aggregate_metric_samples(
-            &self.extract_metric_samples_from_results(test_results),
-        ))
     }
 
     /// Evaluate an individual performance gate

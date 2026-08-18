@@ -31,11 +31,11 @@ fn main() -> io::Result<()> {
 }
 
 fn generate_memory_report(output_file: &str) -> io::Result<()> {
-    let sampler = SystemSampler::new()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sampler init failed: {e}")))?;
+    let sampler =
+        SystemSampler::new().map_err(|e| io::Error::other(format!("sampler init failed: {e}")))?;
     let process = sampler
         .sample_process()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("process sample failed: {e}")))?;
+        .map_err(|e| io::Error::other(format!("process sample failed: {e}")))?;
     let system = sampler.sample_system();
 
     let mut file = File::create(output_file)?;

@@ -4,10 +4,8 @@
 // performance by anticipating future memory access patterns and proactively
 // loading data before it's needed.
 
-#[allow(dead_code)]
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Main prefetching engine
@@ -413,7 +411,7 @@ impl AccessHistoryTracker {
         }
 
         // Stride predictions
-        for (context_id, stride_info) in &self.stride_patterns {
+        for stride_info in self.stride_patterns.values() {
             if stride_info.confidence > 0.5 && stride_info.frequency >= 3 {
                 let next_addr = (stride_info.last_address as isize + stride_info.stride) as usize;
                 predictions.push(PredictedAccess {
@@ -1223,7 +1221,11 @@ mod tests {
             kernel_id: Some(200),
         };
 
+        // A single access to a brand-new context has no established
+        // pattern yet (every strategy requires a minimum run/frequency
+        // before it will fire), so this must not panic and must not
+        // fabricate a prefetch request out of thin air.
         let requests = engine.record_access(access);
-        // Should not panic and may return requests
+        assert!(requests.is_empty());
     }
 }

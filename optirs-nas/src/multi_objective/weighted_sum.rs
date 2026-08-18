@@ -1,13 +1,12 @@
 //! Weighted-sum scalarization multi-objective optimizer.
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::nas_engine::{
     MultiObjectiveConfig, ObjectiveConfig, ObjectiveType, OptimizationDirection,
     OptimizerArchitecture, SearchResult,
 };
 use crate::EvaluationMetric;
 use scirs2_core::numeric::Float;
-use scirs2_core::RngExt;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
@@ -249,7 +248,30 @@ impl<
             + std::iter::Sum,
     > MultiObjectiveOptimizer<T> for WeightedSum<T>
 {
+    /// Adopt `config` as the live objective set and reset the per-run state.
+    ///
+    /// The body used to be a bare `Ok(())`, so a caller that constructed the
+    /// scalarizer from one objective list and then handed `initialize` a different
+    /// [`MultiObjectiveConfig`] kept scalarizing against the constructor's
+    /// objectives — the configuration it was given was silently discarded. Every
+    /// sibling optimizer ([`super::NSGA2`], [`super::NSGA3`],
+    /// [`super::MOEADOptimizer`]) absorbs the configuration here; this one now does
+    /// too, and clears the front/statistics so a re-initialized optimizer never
+    /// reports a front that was built under the previous objectives.
     fn initialize(&mut self, config: &MultiObjectiveConfig<T>) -> Result<()> {
+        if config.objectives.is_empty() {
+            return Err(OptimError::InvalidConfig(
+                "WeightedSum has nothing to scalarize: the supplied \
+                 MultiObjectiveConfig declares no objectives"
+                    .to_string(),
+            ));
+        }
+        self.weights = config.objectives.iter().map(|obj| obj.weight).collect();
+        self.objectives = config.objectives.clone();
+        self.best_solution = None;
+        self.generation = 0;
+        self.statistics = MultiObjectiveStatistics::default();
+        self.pareto_front = ParetoFront::default();
         Ok(())
     }
     fn update_pareto_front(&mut self, new_solutions: &[SearchResult<T>]) -> Result<ParetoFront<T>> {

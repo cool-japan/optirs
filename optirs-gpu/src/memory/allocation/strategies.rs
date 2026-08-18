@@ -3,7 +3,6 @@
 // This module provides various allocation strategies optimized for different
 // workload patterns and memory usage scenarios.
 
-#[allow(dead_code)]
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -498,7 +497,6 @@ impl AllocationStrategyManager {
 
         // Analyze size distribution
         let sizes: Vec<usize> = recent_history.iter().map(|e| e.size).collect();
-        let avg_size = sizes.iter().sum::<usize>() / sizes.len();
         let small_count = sizes
             .iter()
             .filter(|&&s| s < self.adaptive_config.small_allocation_threshold)
@@ -655,13 +653,22 @@ impl AllocationStrategyManager {
             score_buddy,
             score_segregated,
         ];
-        scores.sort_by(|a, b| b.partial_cmp(a).expect("unwrap failed"));
+        scores.sort_by(|a, b| b.total_cmp(a));
         if scores.len() >= 2 {
             confidence = (scores[0] - scores[1]).clamp(0.0, 1.0);
         }
 
+        // A prediction this uncertain (top two strategies scored too close
+        // together) is not worth trusting over the caller's configured
+        // fallback.
+        let strategy = if (confidence as f32) < ml_config.prediction_confidence_threshold {
+            ml_config.fallback_strategy.clone()
+        } else {
+            best_strategy
+        };
+
         MLPrediction {
-            strategy: best_strategy,
+            strategy,
             confidence,
             predicted_latency: features.avg_recent_latency,
         }
@@ -865,6 +872,43 @@ pub struct MLPrediction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_predict_best_strategy_falls_back_below_confidence_threshold() {
+        let manager = AllocationStrategyManager::new(AllocationStrategy::BestFit);
+        let features = MLFeatures {
+            requested_size: 8192.0,
+            avg_recent_size: 8192.0,
+            avg_recent_latency: 10.0,
+            cache_hit_rate: 0.5,
+            fragmentation_level: 0.2,
+            utilization_level: 0.5,
+            allocation_frequency: 10.0,
+        };
+
+        // A threshold above 1.0 (confidence is clamped to [0, 1]) can never
+        // be met, so the prediction must always report the configured
+        // fallback rather than a "best" pick it isn't actually confident in.
+        let unreachable_threshold = MLConfig {
+            model_type: MLModelType::LinearRegression,
+            feature_window: 10,
+            training_interval: 100,
+            prediction_confidence_threshold: 1.1,
+            fallback_strategy: AllocationStrategy::WorstFit,
+        };
+        let prediction = manager.predict_best_strategy(&features, &unreachable_threshold);
+        assert_eq!(prediction.strategy, AllocationStrategy::WorstFit);
+
+        // A threshold of 0.0 is always met, so the prediction must report
+        // whatever scored highest rather than the fallback.
+        let always_reachable = MLConfig {
+            prediction_confidence_threshold: 0.0,
+            fallback_strategy: AllocationStrategy::WorstFit,
+            ..unreachable_threshold
+        };
+        let prediction = manager.predict_best_strategy(&features, &always_reachable);
+        assert_ne!(prediction.strategy, AllocationStrategy::WorstFit);
+    }
 
     #[test]
     fn test_allocation_strategies() {

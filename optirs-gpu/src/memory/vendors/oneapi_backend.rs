@@ -31,10 +31,8 @@
 // declared for API-shape completeness but nothing in this module ever
 // increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -338,8 +336,6 @@ pub enum SyclOperationType {
 pub struct OneApiMemoryPool {
     /// Memory type
     memory_type: OneApiMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -419,7 +415,6 @@ impl OneApiMemoryPool {
 
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -621,6 +616,10 @@ impl SyclQueueManager {
     }
 
     /// Create new queue
+    ///
+    /// Reuses a previously [`Self::destroy_queue`]d queue from `queue_pool`
+    /// when one is available (its operation queue is cleared and it is
+    /// given a fresh ID) instead of always allocating a new one.
     pub fn create_queue(
         &mut self,
         properties: Option<SyclQueueProperties>,
@@ -634,24 +633,32 @@ impl SyclQueueManager {
             priority: self.config.default_priority.clone(),
         });
 
-        let queue = SyclQueue {
+        let mut queue = self.queue_pool.pop_front().unwrap_or_else(|| SyclQueue {
             handle: std::ptr::null_mut(), // Would be actual SYCL queue
             id: queue_id,
-            properties: queue_properties,
+            properties: queue_properties.clone(),
             created_at: Instant::now(),
             operations: std::collections::VecDeque::new(),
             context_id: None,
-        };
+        });
+        queue.id = queue_id;
+        queue.properties = queue_properties;
+        queue.created_at = Instant::now();
+        queue.operations.clear();
+        queue.context_id = None;
 
         self.queues.push(queue);
         Ok(queue_id)
     }
 
     /// Destroy queue
+    ///
+    /// Returns the queue to `queue_pool` for [`Self::create_queue`] to
+    /// reuse instead of dropping it outright.
     pub fn destroy_queue(&mut self, queue_id: u32) -> Result<(), OneApiError> {
         if let Some(pos) = self.queues.iter().position(|q| q.id == queue_id) {
             let queue = self.queues.remove(pos);
-            // Clean up queue resources
+            self.queue_pool.push_back(queue);
             Ok(())
         } else {
             Err(OneApiError::InvalidQueue("Queue not found".to_string()))

@@ -3,7 +3,6 @@
 // This module provides various memory allocation strategies optimized for
 // different GPU workload patterns and memory usage scenarios.
 
-#[allow(dead_code)]
 pub mod arena_allocator;
 pub mod buddy_allocator;
 pub mod slab_allocator;
@@ -507,24 +506,55 @@ impl UnifiedAllocator {
         self.deallocate(ptr_u8, 0)
     }
 
-    /// Reallocate memory with new size
+    /// Allocate a fresh block for a reallocation request.
+    ///
+    /// Deliberately does *not* free `_ptr` (its parameter is unused by
+    /// design, not by oversight): the sole caller,
+    /// [`crate::memory::GpuMemorySystem::reallocate`], already owns the
+    /// complete, correct realloc contract one layer up -- it tracks the old
+    /// allocation's real size (which this layer does not), copies the live
+    /// data with it via `copy_nonoverlapping`, and only then frees the old
+    /// pointer. Freeing `_ptr` here as well would race that caller: it
+    /// still reads from `_ptr` after this call returns whenever the new
+    /// address differs (the overwhelmingly common case, since this always
+    /// allocates fresh rather than truly growing in place), which would
+    /// make that read a use-after-free and the caller's own free a
+    /// double-free.
     pub fn reallocate(
         &mut self,
-        ptr: *mut std::ffi::c_void,
+        _ptr: *mut std::ffi::c_void,
         new_size: usize,
-        _allocator_type: AllocatorType,
+        allocator_type: AllocatorType,
     ) -> Result<*mut std::ffi::c_void, AllocationError> {
-        // For simplicity, implement as free + allocate
-        // In a production system, this should be optimized for in-place reallocation
-        let new_ptr = self.allocate(new_size, _allocator_type, None)?;
-        // Note: We should copy the data here, but we don't have the old size
-        // This is a simplified implementation
+        // For simplicity, implement as a fresh allocation; the caller
+        // (see the doc comment above) handles copying and freeing the old
+        // block. In a production system, this should instead be optimized
+        // for true in-place reallocation using `_ptr`.
+        let new_ptr = self.allocate(new_size, allocator_type, None)?;
         Ok(new_ptr.as_ptr() as *mut std::ffi::c_void)
     }
 
     /// Get unified statistics
     pub fn get_stats(&self) -> &UnifiedStats {
         &self.stats
+    }
+
+    /// Get the active configuration (thresholds, enabled sub-allocators,
+    /// default strategy).
+    ///
+    /// `allocate` currently always uses the type its caller passes rather
+    /// than deriving one from `buddy_threshold`/`slab_threshold`/
+    /// `arena_threshold`/`enable_auto_routing` -- centralizing that
+    /// decision here would change
+    /// [`crate::memory::GpuMemorySystem::choose_allocator`]'s tested
+    /// routing boundaries (its hardcoded 1 KiB / 1 MiB cutovers do not
+    /// line up with this config's threshold values), which is a
+    /// deliberate behavior decision left to that caller rather than one
+    /// this lint pass makes unilaterally. Exposed so callers can inspect
+    /// (and eventually route against) the real configuration instead of
+    /// duplicating their own hardcoded thresholds.
+    pub fn get_config(&self) -> &UnifiedConfig {
+        &self.config
     }
 
     /// Get detailed allocator information
@@ -759,6 +789,21 @@ mod tests {
         let config = UnifiedConfig::default();
         let allocator = UnifiedAllocator::new(ptr, size, config);
         assert!(allocator.is_ok());
+    }
+
+    #[test]
+    fn test_get_config_reflects_construction_config() {
+        let size = 1024 * 1024;
+        let memory = vec![0u8; size];
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
+
+        let config = UnifiedConfig {
+            buddy_threshold: 2048,
+            ..UnifiedConfig::default()
+        };
+        let allocator = UnifiedAllocator::new(ptr, size, config).expect("unwrap failed");
+
+        assert_eq!(allocator.get_config().buddy_threshold, 2048);
     }
 
     #[test]

@@ -4,11 +4,8 @@
 // optimized for GPU memory patterns, including mark-and-sweep, generational,
 // incremental, and real-time garbage collection strategies.
 
-#[allow(dead_code)]
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::marker::PhantomData;
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, RwLock};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// Main garbage collection engine
@@ -271,10 +268,27 @@ impl ReferenceTracker {
 }
 
 /// GC scheduling and coordination
+///
+/// `timing_state` and `trigger_conditions` are real and load-bearing: see
+/// `GarbageCollectionEngine::should_collect`, which evaluates
+/// `trigger_conditions` against live memory-usage and timing data to decide
+/// whether to run a collection right now. `scheduled_tasks`/`current_task`
+/// are a separate, unfinished priority/deadline-based task queue
+/// (`GCTask` has `priority`, `target_region`, `deadline`, ...) that nothing
+/// currently enqueues into or drains: `should_collect` returns a plain
+/// `bool` and `collect` iterates every tracked region directly rather than
+/// consuming a queued `GCTask`. Wiring a real task queue in means deciding
+/// how it should interact with that existing per-region collection loop
+/// (does `collect` start consuming `scheduled_tasks` instead? does
+/// `should_collect` enqueue a task rather than / in addition to returning
+/// `bool`?) -- a scheduling-policy decision, not a lint fix, so this is
+/// recorded as a finding rather than force-wired.
 pub struct GCScheduler {
-    /// Scheduled GC tasks
+    /// Scheduled GC tasks (see the struct-level doc: not yet consumed).
+    #[allow(dead_code)]
     scheduled_tasks: VecDeque<GCTask>,
-    /// Current executing task
+    /// Current executing task (see the struct-level doc: not yet set).
+    #[allow(dead_code)]
     current_task: Option<GCTask>,
     /// GC timing state
     timing_state: GCTimingState,
@@ -397,15 +411,18 @@ impl MarkSweepCollector {
         }
     }
 
-    fn mark_phase(&self, region: &mut MemoryRegion, tracker: &ReferenceTracker) -> HashSet<usize> {
+    /// Mark every object in `region` as reachable or not, persisting the
+    /// result on each [`ObjectMetadata::marked`] field for
+    /// [`Self::sweep_phase`] to read. The reachable set itself does not
+    /// need to be returned: it has already done its job once every object
+    /// carries its own verdict.
+    fn mark_phase(&self, region: &mut MemoryRegion, tracker: &ReferenceTracker) {
         let reachable = tracker.get_reachable_objects();
 
         // Mark all reachable objects in this region
         for (addr, obj) in region.objects.iter_mut() {
             obj.marked = reachable.contains(addr);
         }
-
-        reachable
     }
 
     fn sweep_phase(&self, region: &mut MemoryRegion) -> (usize, u32) {
@@ -463,7 +480,7 @@ impl GarbageCollector for MarkSweepCollector {
         let start_time = Instant::now();
 
         // Mark phase
-        let reachable = self.mark_phase(region, tracker);
+        self.mark_phase(region, tracker);
 
         // Sweep phase
         let (bytes_collected, objects_collected) = self.sweep_phase(region);
@@ -700,19 +717,37 @@ impl IncrementalCollector {
     }
 
     fn schedule_incremental_work(&mut self, region: &MemoryRegion) {
-        let object_addrs: Vec<usize> = region.objects.keys().copied().collect();
+        let mut object_addrs: Vec<usize> = region.objects.keys().copied().collect();
+        // Sort so each chunk's (first, last) pair is a tight, ordered
+        // range rather than two arbitrary addresses from HashMap's
+        // unspecified iteration order.
+        object_addrs.sort_unstable();
         let chunk_size = self.config.work_unit_size;
 
-        // Schedule marking work
+        // Schedule marking work first, then sweeping: `work_queue` is a
+        // FIFO, so every marking work item is popped and every object's
+        // `marked` flag is final (see `perform_incremental_work`) before
+        // any sweeping work item runs. Without a sweeping phase ever being
+        // scheduled, the collector would mark forever and never reclaim
+        // anything.
         for chunk in object_addrs.chunks(chunk_size) {
             if !chunk.is_empty() {
-                let work = IncrementalWork {
+                self.work_queue.push_back(IncrementalWork {
                     phase: IncrementalPhase::Marking,
                     region_addr: region.base_addr,
                     object_range: (chunk[0], chunk[chunk.len() - 1]),
                     estimated_time: Duration::from_micros(chunk.len() as u64 * 10),
-                };
-                self.work_queue.push_back(work);
+                });
+            }
+        }
+        for chunk in object_addrs.chunks(chunk_size) {
+            if !chunk.is_empty() {
+                self.work_queue.push_back(IncrementalWork {
+                    phase: IncrementalPhase::Sweeping,
+                    region_addr: region.base_addr,
+                    object_range: (chunk[0], chunk[chunk.len() - 1]),
+                    estimated_time: Duration::from_micros(chunk.len() as u64 * 10),
+                });
             }
         }
     }
@@ -725,9 +760,12 @@ impl IncrementalCollector {
         let time_budget = self.config.time_slice;
         let start_time = Instant::now();
         let mut work_done = false;
+        let mut bytes_collected = 0usize;
+        let mut objects_collected = 0u32;
 
         while start_time.elapsed() < time_budget {
             if let Some(work) = self.work_queue.pop_front() {
+                self.current_phase = work.phase.clone();
                 match work.phase {
                     IncrementalPhase::Marking => {
                         // Perform incremental marking
@@ -744,6 +782,8 @@ impl IncrementalCollector {
                         for addr in work.object_range.0..=work.object_range.1 {
                             if let Some(obj) = region.objects.get(&addr) {
                                 if !obj.marked {
+                                    bytes_collected += obj.size;
+                                    objects_collected += 1;
                                     region.objects.remove(&addr);
                                 }
                             }
@@ -758,10 +798,11 @@ impl IncrementalCollector {
         }
 
         if work_done && self.work_queue.is_empty() {
-            // Collection complete
+            // Collection complete: no more incremental work pending.
+            self.current_phase = IncrementalPhase::Idle;
             Some(GCResult {
-                bytes_collected: 0,   // Would track actual bytes
-                objects_collected: 0, // Would track actual objects
+                bytes_collected,
+                objects_collected,
                 collection_time: start_time.elapsed(),
                 algorithm_used: GCAlgorithm::Incremental,
                 regions_collected: vec![region.base_addr],
@@ -772,6 +813,12 @@ impl IncrementalCollector {
         } else {
             None
         }
+    }
+
+    /// The phase this collector is currently in (or [`IncrementalPhase::Idle`]
+    /// between incremental work slices) -- see [`Self::perform_incremental_work`].
+    pub fn current_phase(&self) -> &IncrementalPhase {
+        &self.current_phase
     }
 }
 
@@ -1268,6 +1315,70 @@ mod tests {
         let collector = IncrementalCollector::new(config);
 
         assert_eq!(collector.name(), "Incremental");
+        assert_eq!(*collector.current_phase(), IncrementalPhase::Idle);
+    }
+
+    #[test]
+    fn test_incremental_collector_marks_then_sweeps_and_returns_to_idle() {
+        let config = IncrementalConfig::default();
+        let mut collector = IncrementalCollector::new(config);
+        let mut tracker = ReferenceTracker::new();
+
+        // Object 100 is reachable (rooted); 200 and 300 are not.
+        tracker.add_root(100);
+
+        let mut objects = HashMap::new();
+        for addr in [100usize, 200, 300] {
+            objects.insert(
+                addr,
+                ObjectMetadata {
+                    address: addr,
+                    size: 64,
+                    type_id: 0,
+                    ref_count: 0,
+                    marked: false,
+                    age: 0,
+                    last_access: Some(Instant::now()),
+                    references: Vec::new(),
+                },
+            );
+        }
+        let mut region = MemoryRegion {
+            base_addr: 0x1000,
+            size: 4096,
+            generation: 0,
+            objects,
+            free_bitmap: Vec::new(),
+            last_collection: None,
+            collection_count: 0,
+            utilization: 0.0,
+        };
+
+        // Drive the collector to completion: `collect` returns
+        // `Err(CollectionIncomplete)` while incremental work remains
+        // queued, and `Ok(GCResult)` only once marking and sweeping have
+        // both fully drained.
+        let mut result = None;
+        for _ in 0..100 {
+            match collector.collect(&mut region, &mut tracker) {
+                Ok(r) => {
+                    result = Some(r);
+                    break;
+                }
+                Err(GCError::CollectionIncomplete(_)) => continue,
+                Err(e) => panic!("unexpected GC error: {e:?}"),
+            }
+        }
+        let result = result.expect("incremental collection should complete within 100 slices");
+
+        // The two unreachable objects (200, 300; 64 bytes each) must have
+        // been genuinely swept, not just marked-and-left-behind.
+        assert_eq!(result.objects_collected, 2);
+        assert_eq!(result.bytes_collected, 128);
+        assert!(region.objects.contains_key(&100));
+        assert!(!region.objects.contains_key(&200));
+        assert!(!region.objects.contains_key(&300));
+        assert_eq!(*collector.current_phase(), IncrementalPhase::Idle);
     }
 
     #[test]

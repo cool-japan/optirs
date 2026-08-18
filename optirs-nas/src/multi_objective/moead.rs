@@ -33,7 +33,6 @@ use crate::error::{OptimError, Result};
 use crate::nas_engine::{MultiObjectiveConfig, OptimizerArchitecture, SearchResult};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 

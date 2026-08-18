@@ -4,12 +4,19 @@
 // including online learning, continual learning, and lifelong optimization systems.
 
 use crate::error::{OptimError, Result};
-use crate::utils::{scalar_or, total_order, try_scalar};
+use crate::utils::{scalar_or, total_order, try_f64, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use scirs2_core::random::thread_rng;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+
+mod transfer;
+
+pub use transfer::{
+    cosine_similarity, TaskStatistics, TransferOutcome, DEFAULT_TASK_EMBEDDING_DIM,
+    DEFAULT_TRANSFER_THRESHOLD, MAX_TASK_EMBEDDING_DIM,
+};
 
 /// Online learning strategy
 #[derive(Debug, Clone)]
@@ -215,6 +222,13 @@ pub struct LifelongOptimizer<A: Float, D: Dimension> {
     current_task: Option<String>,
     /// Performance tracking across tasks
     task_performance: HashMap<String, Vec<A>>,
+    /// Last loss each task recorded while it was still the active task: the
+    /// reference a later re-evaluation is compared against to measure
+    /// catastrophic forgetting.
+    task_reference_loss: HashMap<String, A>,
+    /// Cosine similarity a new task must reach before it is warm-started from
+    /// an existing one, and the linkage at which tasks are clustered.
+    transfer_threshold: f64,
 }
 
 /// Shared knowledge representation for lifelong learning
@@ -233,6 +247,13 @@ pub struct SharedKnowledge<A: Float, D: Dimension> {
     /// Meta-parameters shared across tasks, maintained by the first-order
     /// Reptile update in [`LifelongOptimizer::apply_meta_learning`].
     meta_parameters: Option<Array<A, D>>,
+    /// Running gradient statistics per task, the raw material every task
+    /// embedding is derived from.
+    task_statistics: HashMap<String, TaskStatistics>,
+    /// Fixed-width task embeddings derived from `task_statistics`.
+    task_embeddings: HashMap<String, Vec<f64>>,
+    /// Warm-start strength actually applied, keyed by `(source, target)`.
+    transfer_weights: HashMap<(String, String), f64>,
 }
 
 /// Task relationship graph
@@ -240,6 +261,10 @@ pub struct SharedKnowledge<A: Float, D: Dimension> {
 pub struct TaskGraph {
     /// Task relationships (similarity scores)
     task_similarities: HashMap<(String, String), f64>,
+    /// Tasks each task was warm-started from.
+    task_dependencies: HashMap<String, Vec<String>>,
+    /// Agglomerative clustering of `task_similarities`.
+    task_clusters: Vec<Vec<String>>,
 }
 
 /// Memory buffer for important examples
@@ -672,9 +697,14 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
                 fisher_sample_count: 0,
                 important_parameters: None,
                 meta_parameters: None,
+                task_statistics: HashMap::new(),
+                task_embeddings: HashMap::new(),
+                transfer_weights: HashMap::new(),
             },
             task_graph: TaskGraph {
                 task_similarities: HashMap::new(),
+                task_dependencies: HashMap::new(),
+                task_clusters: Vec::new(),
             },
             memory_buffer: MemoryBuffer {
                 examples: VecDeque::new(),
@@ -684,6 +714,8 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             },
             current_task: None,
             task_performance: HashMap::new(),
+            task_reference_loss: HashMap::new(),
+            transfer_threshold: DEFAULT_TRANSFER_THRESHOLD,
         }
     }
 
@@ -694,11 +726,20 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
     /// Consolidation penalty pulls subsequent tasks back toward, and the
     /// Fisher-information sample counter is reset so the next task's estimate
     /// starts from its own gradients rather than inheriting the old average.
+    /// The outgoing task's last loss is also pinned as the reference a later
+    /// re-evaluation is compared against ([`Self::record_task_performance`]).
     pub fn start_task(&mut self, task_id: String, initial_parameters: Array<A, D>) -> Result<()> {
         if let Some(previous) = self.current_task.clone() {
             if let Some(optimizer) = self.task_optimizers.get(&previous) {
                 self.shared_knowledge.important_parameters = Some(optimizer.parameters().clone());
                 self.shared_knowledge.fisher_sample_count = 0;
+            }
+            if let Some(&last_loss) = self
+                .task_performance
+                .get(&previous)
+                .and_then(|history| history.last())
+            {
+                self.task_reference_loss.insert(previous, last_loss);
             }
         }
 
@@ -771,6 +812,11 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
         if let Some(performance) = self.task_performance.get_mut(&task_id) {
             performance.push(loss);
         }
+
+        // Fold the task's *own* gradient (not the EWC/GEM-adjusted one, which
+        // carries the regularizer rather than the task) into the running
+        // statistics that drive cross-task transfer.
+        self.record_task_observation(gradient)?;
 
         // Apply lifelong learning strategy
         match &self.strategy {
@@ -1116,8 +1162,78 @@ impl<A: Float + ScalarOperand + Debug + std::iter::Sum, D: Dimension + Send + Sy
             num_tasks,
             average_performance: avg_performance,
             memory_usage: self.memory_buffer.examples.len(),
-            transfer_efficiency: scalar_or(0.8, A::zero()), // Placeholder
-            catastrophic_forgetting: scalar_or(0.1, A::zero()), // Placeholder
+            // Mean strength of the warm starts actually performed; zero when no
+            // task has been transferred into.
+            transfer_efficiency: scalar_or(self.mean_transfer_weight(), A::zero()),
+            catastrophic_forgetting: scalar_or(self.measured_forgetting(), A::zero()),
+        }
+    }
+
+    /// Backward transfer measured from the losses recorded for tasks that are no
+    /// longer current.
+    ///
+    /// A task's *reference* loss is the last one recorded while it was the
+    /// active task. Anything recorded for it afterwards — a re-evaluation the
+    /// caller performs with [`Self::record_task_performance`] — is compared
+    /// against that reference, and the mean positive degradation across tasks is
+    /// the forgetting measure (Lopez-Paz & Ranzato, "Gradient Episodic Memory
+    /// for Continual Learning", NeurIPS 2017, report the same quantity with the
+    /// opposite sign).
+    ///
+    /// It is `0` until an old task is actually re-evaluated: forgetting is not
+    /// observable without measuring the old task again, and reporting a
+    /// non-zero constant instead — which this used to do — would be a
+    /// fabrication.
+    fn measured_forgetting(&self) -> f64 {
+        let mut total = 0.0;
+        let mut counted = 0usize;
+
+        for (task_id, reference) in &self.task_reference_loss {
+            let Some(history) = self.task_performance.get(task_id) else {
+                continue;
+            };
+            let Some(&latest) = history.last() else {
+                continue;
+            };
+            let (Ok(latest), Ok(reference)) = (try_f64(latest), try_f64(*reference)) else {
+                continue;
+            };
+            if !latest.is_finite() || !reference.is_finite() {
+                continue;
+            }
+            total += (latest - reference).max(0.0);
+            counted += 1;
+        }
+
+        if counted == 0 {
+            0.0
+        } else {
+            total / counted as f64
+        }
+    }
+
+    /// Record a loss measured for a task that is not the active one.
+    ///
+    /// This is how a caller feeds re-evaluation of previously-learned tasks back
+    /// in, which is what makes [`LifelongStats::catastrophic_forgetting`]
+    /// measurable. Recording against the active task is rejected: its losses
+    /// arrive through [`Self::update_current_task`], and mixing the two would
+    /// move the reference the measurement is taken against.
+    pub fn record_task_performance(&mut self, task_id: &str, loss: A) -> Result<()> {
+        if self.current_task.as_deref() == Some(task_id) {
+            return Err(OptimError::InvalidConfig(format!(
+                "task '{task_id}' is the active task; its losses are recorded by \
+                 update_current_task"
+            )));
+        }
+        match self.task_performance.get_mut(task_id) {
+            Some(history) => {
+                history.push(loss);
+                Ok(())
+            }
+            None => Err(OptimError::InvalidConfig(format!(
+                "unknown task '{task_id}'"
+            ))),
         }
     }
 }

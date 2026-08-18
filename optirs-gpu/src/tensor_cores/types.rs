@@ -2,20 +2,10 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
-#[cfg(any(
-    feature = "cuda",
-    feature = "metal",
-    feature = "opencl",
-    feature = "wgpu"
-))]
-use crate::memory::vendors::cuda_backend::CudaStream;
 use crate::GpuOptimError;
-use scirs2_core::gpu::GpuContext;
-use scirs2_core::ndarray::{Array, Array2, Dimension};
+use scirs2_core::ndarray::Array2;
 use scirs2_core::numeric::Float;
 use std::fmt::Debug;
-
-use std::collections::HashMap;
 
 /// Adam optimizer hyperparameters
 #[derive(Debug, Clone)]
@@ -387,13 +377,6 @@ pub enum LoadBalancingStrategy {
     PriorityBased,
     AdaptiveLoad,
 }
-#[cfg(not(any(
-    feature = "cuda",
-    feature = "metal",
-    feature = "opencl",
-    feature = "wgpu"
-)))]
-pub struct CudaStream;
 /// Types of tensor core operations
 #[derive(Debug, Clone)]
 pub enum TensorCoreOpType<T: Float + Debug + Send + Sync + 'static> {
@@ -585,14 +568,23 @@ impl TensorCoreOptimizer {
         }
     }
     /// Perform tensor core optimized matrix multiplication
+    ///
+    /// No reachable backend (CUDA/Metal/OpenCL/wgpu) has a real WMMA/tensor-
+    /// core dispatch path behind it yet, so every input is intentionally
+    /// unused and this always returns an honest `Err` rather than silently
+    /// falling back to a CPU matmul or fabricating a result — see
+    /// `test_tensor_core_batch_operations` and the sibling
+    /// `*_tensor_core_*` methods below, which are the same documented gap
+    /// (a genuine "not yet implemented" stub, not dead code: it is called
+    /// and tested).
     pub fn tensor_core_gemm<T: Float + Debug + Send + Sync + 'static>(
         &self,
-        a: &Array2<T>,
-        b: &Array2<T>,
-        c: &mut Array2<T>,
-        alpha: T,
-        beta: T,
-        precision: TensorCorePrecision,
+        _a: &Array2<T>,
+        _b: &Array2<T>,
+        _c: &mut Array2<T>,
+        _alpha: T,
+        _beta: T,
+        _precision: TensorCorePrecision,
     ) -> Result<(), GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -616,13 +608,17 @@ impl TensorCoreOptimizer {
         }
     }
     /// Fused Adam update with tensor core optimization
+    ///
+    /// Same documented gap as [`Self::tensor_core_gemm`]: no reachable
+    /// backend implements this fast path yet, so it always returns an
+    /// honest `Err` and every input is intentionally unused.
     pub fn fused_adam_tensor_core<T: Float + Debug + Send + Sync + 'static>(
         &self,
-        params: &mut Array2<T>,
-        grads: &Array2<T>,
-        exp_avg: &mut Array2<T>,
-        exp_avg_sq: &mut Array2<T>,
-        adam_params: &AdamParams<T>,
+        _params: &mut Array2<T>,
+        _grads: &Array2<T>,
+        _exp_avg: &mut Array2<T>,
+        _exp_avg_sq: &mut Array2<T>,
+        _adam_params: &AdamParams<T>,
     ) -> Result<(), GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -645,21 +641,6 @@ impl TensorCoreOptimizer {
             Err(GpuOptimError::CudaNotAvailable)
         }
     }
-    fn calculate_grid_dimensions(
-        &self,
-        m: usize,
-        n: usize,
-        padding_m: usize,
-        padding_n: usize,
-    ) -> (u32, u32, u32) {
-        let padded_m = m + padding_m;
-        let padded_n = n + padding_n;
-        let tile_m = self.config.wmma_tile_m;
-        let tile_n = self.config.wmma_tile_n;
-        let grid_x = padded_n.div_ceil(tile_n);
-        let grid_y = padded_m.div_ceil(tile_m);
-        (grid_x as u32, grid_y as u32, 1)
-    }
     /// Get tensor core capability information
     pub fn get_tensor_core_info(&self) -> TensorCoreInfo {
         TensorCoreInfo {
@@ -678,13 +659,17 @@ impl TensorCoreOptimizer {
         MixedPrecisionTrainer::new(self.get_tensor_core_info(), &self.config)
     }
     /// Sparse tensor core optimization for 2:4 structured sparsity
+    ///
+    /// Same documented gap as [`Self::tensor_core_gemm`]: no reachable
+    /// backend implements this fast path yet, so it always returns an
+    /// honest `Err` and every input is intentionally unused.
     pub fn sparse_tensor_core_gemm<T: Float + Debug + Send + Sync + 'static>(
         &self,
-        a: &Array2<T>,
-        b_sparse: &SparseTensorCoreMatrix<T>,
-        c: &mut Array2<T>,
-        alpha: T,
-        beta: T,
+        _a: &Array2<T>,
+        _b_sparse: &SparseTensorCoreMatrix<T>,
+        _c: &mut Array2<T>,
+        _alpha: T,
+        _beta: T,
     ) -> Result<(), GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -708,10 +693,15 @@ impl TensorCoreOptimizer {
         }
     }
     /// Multi-batch tensor core operations for large-scale training
+    ///
+    /// Same documented gap as [`Self::tensor_core_gemm`]: no reachable
+    /// backend implements this fast path yet, so it always returns an
+    /// honest `Err` and every input is intentionally unused (see
+    /// `test_tensor_core_batch_operations`).
     pub fn multi_batch_tensor_core_ops<T: Float + Debug + Send + Sync + 'static>(
         &self,
-        batches: &[TensorCoreBatch<T>],
-        precision: TensorCorePrecision,
+        _batches: &[TensorCoreBatch<T>],
+        _precision: TensorCorePrecision,
     ) -> Result<Vec<Array2<T>>, GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -735,10 +725,14 @@ impl TensorCoreOptimizer {
         }
     }
     /// Advanced pipeline optimization for tensor core operations
+    ///
+    /// Same documented gap as [`Self::tensor_core_gemm`]: no reachable
+    /// backend implements this fast path yet, so it always returns an
+    /// honest `Err` and every input is intentionally unused.
     pub fn optimized_pipeline_gemm<T: Float + Debug + Send + Sync + 'static>(
         &self,
-        operations: &[TensorCoreOperation<T>],
-        pipeline_config: PipelineOptimizationConfig,
+        _operations: &[TensorCoreOperation<T>],
+        _pipeline_config: PipelineOptimizationConfig,
     ) -> Result<Vec<Array2<T>>, GpuOptimError> {
         #[cfg(any(
             feature = "cuda",
@@ -760,66 +754,6 @@ impl TensorCoreOptimizer {
         {
             Err(GpuOptimError::CudaNotAvailable)
         }
-    }
-    fn sort_operations_for_pipeline<T: Float + Debug + Send + Sync + 'static>(
-        &self,
-        operations: &[TensorCoreOperation<T>],
-    ) -> Vec<TensorCoreOperation<T>> {
-        let mut sorted_ops = operations.to_vec();
-        sorted_ops.sort_by(|a, b| {
-            let size_a = a.output_dims.0 * a.output_dims.1;
-            let size_b = b.output_dims.0 * b.output_dims.1;
-            size_b.cmp(&size_a)
-        });
-        sorted_ops
-    }
-    fn execute_tensor_core_op_on_stream<T: Float + Debug + Send + Sync + 'static>(
-        &self,
-        operation: &TensorCoreOperation<T>,
-        result: &mut Array2<T>,
-        stream: &CudaStream,
-    ) -> Result<(), GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            match &operation.op_type {
-                TensorCoreOpType::GEMM { a, b, alpha, beta } => {
-                    self.tensor_core_gemm(a, b, result, *alpha, *beta, operation.precision)?;
-                }
-                TensorCoreOpType::SparseGEMM {
-                    a,
-                    b_sparse,
-                    alpha,
-                    beta,
-                } => {
-                    self.sparse_tensor_core_gemm(a, b_sparse, result, *alpha, *beta)?;
-                }
-                TensorCoreOpType::FusedAdam { params, grads, .. } => {
-                    result.assign(params);
-                }
-            }
-        }
-        Ok(())
-    }
-    fn prefetch_next_operation<T: Float + Debug + Send + Sync + 'static>(
-        &self,
-        next_operation: &TensorCoreOperation<T>,
-        stream: &CudaStream,
-    ) -> Result<(), GpuOptimError> {
-        #[cfg(any(
-            feature = "cuda",
-            feature = "metal",
-            feature = "opencl",
-            feature = "wgpu"
-        ))]
-        {
-            if let TensorCoreOpType::GEMM { a, b, .. } = &next_operation.op_type {}
-        }
-        Ok(())
     }
     /// Dynamic memory coalescing optimization
     pub fn optimize_memory_access_patterns<T: Float + Debug + Send + Sync + 'static>(
@@ -1165,6 +1099,10 @@ impl TensorCoreOptimizer {
             feature = "wgpu"
         )))]
         {
+            // With no GPU backend feature enabled there is no compute path to
+            // benchmark at all, so `m`/`n`/`k`/`precision` (used above by the
+            // real, feature-gated branch) go unused here.
+            let _ = (m, n, k, precision);
             Ok(TensorCorePerformanceResult {
                 avg_time_ms: 0.0,
                 tflops: 0.0,
@@ -1173,17 +1111,41 @@ impl TensorCoreOptimizer {
             })
         }
     }
+    /// Only reachable from the feature-gated branch of
+    /// `benchmark_single_configuration` above.
+    #[cfg(any(
+        feature = "cuda",
+        feature = "metal",
+        feature = "opencl",
+        feature = "wgpu"
+    ))]
     fn estimate_memory_bandwidth(&self, m: usize, n: usize, k: usize, timems: f64) -> f64 {
         let bytes_transferred = (m * k + k * n + m * n) * 4;
         let bytes_per_second = bytes_transferred as f64 / (timems / 1000.0);
         bytes_per_second / 1e9
     }
+    /// Estimate WMMA tile utilization for an `m x n x k` GEMM.
+    ///
+    /// `precision` is accepted (real hardware's tile throughput does vary by
+    /// precision, e.g. FP8 packs more elements per tile than FP16 on
+    /// Hopper) but not yet folded into the estimate: this is only reachable
+    /// from `benchmark_single_configuration`, which itself always returns
+    /// early via [`Self::tensor_core_gemm`]'s honest `Err` (see that
+    /// method's docs), so no precision-dependent scaling would currently be
+    /// observable. Underscored rather than implemented against a path that
+    /// cannot run yet.
+    #[cfg(any(
+        feature = "cuda",
+        feature = "metal",
+        feature = "opencl",
+        feature = "wgpu"
+    ))]
     fn estimate_tensor_core_utilization(
         &self,
         m: usize,
         n: usize,
         k: usize,
-        precision: TensorCorePrecision,
+        _precision: TensorCorePrecision,
     ) -> f64 {
         let tile_m = self.config.wmma_tile_m;
         let tile_n = self.config.wmma_tile_n;
@@ -1195,6 +1157,13 @@ impl TensorCoreOptimizer {
         let theoretical_max = self.estimate_max_tensor_cores();
         (total_tensor_cores as f64 / theoretical_max as f64).min(1.0) * 100.0
     }
+    /// Only reachable from `estimate_tensor_core_utilization` above.
+    #[cfg(any(
+        feature = "cuda",
+        feature = "metal",
+        feature = "opencl",
+        feature = "wgpu"
+    ))]
     fn estimate_max_tensor_cores(&self) -> usize {
         match self.compute_capability {
             (major, _minor) if major >= 9 => 528,

@@ -397,7 +397,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
 
         let result =
             result_from_score(score, self.threshold, AnomalyType::SpatialAnomaly, metadata)?;
-        self.counters.record_prediction(result.is_anomaly);
+        self.counters
+            .record_prediction(result.is_anomaly, result.anomaly_score);
         Ok(result)
     }
 
@@ -689,7 +690,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
             severity: severity_for(score, scale),
             metadata,
         };
-        self.counters.record_prediction(result.is_anomaly);
+        self.counters
+            .record_prediction(result.is_anomaly, result.anomaly_score);
         Ok(result)
     }
 
@@ -922,7 +924,8 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum> MLAnomalyDetecto
             AnomalyType::ContextualAnomaly,
             metadata,
         )?;
-        self.counters.record_prediction(result.is_anomaly);
+        self.counters
+            .record_prediction(result.is_anomaly, result.anomaly_score);
         Ok(result)
     }
 

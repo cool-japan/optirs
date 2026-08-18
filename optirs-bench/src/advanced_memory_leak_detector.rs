@@ -1116,12 +1116,20 @@ impl AdvancedMemoryLeakDetector {
         Ok(())
     }
 
+    // NOTE: `session`/`_result` are intentionally unused. `self.statistics` (unlike
+    // `memory_history`/`active_sessions`) is a plain `MemoryStatistics`, not behind
+    // an `Arc<Mutex<_>>`/`Arc<RwLock<_>>`, and this method only takes `&self` (its
+    // caller, `stop_monitoring`, is `&self` too, deliberately, so it stays callable
+    // from multiple threads like the rest of this detector). Actually aggregating
+    // per-session stats into detector-wide `MemoryStatistics` needs that field
+    // behind interior mutability plus a public accessor to read it back out
+    // (nothing reads `self.statistics` today) -- a real structural change, not a
+    // one-line fix, so it is left as a tracked gap rather than partially done here.
     fn update_statistics(
         &self,
-        session: &MonitoringSession,
+        _session: &MonitoringSession,
         _result: &LeakAnalysisResult,
     ) -> Result<()> {
-        // Implementation would update global statistics
         Ok(())
     }
 }
@@ -1207,7 +1215,7 @@ impl LeakAnalysisEngine {
         // the slope is nonzero it is the strongest possible evidence of a
         // real trend, so treat it as maximally significant rather than
         // reporting a t-statistic of 0 (which would say the opposite).
-        let (t_stat, p_value) = if se_slope > f64::EPSILON {
+        let (_t_stat, p_value) = if se_slope > f64::EPSILON {
             let t = slope / se_slope;
             (t, stats::two_tailed_p_value(t))
         } else if slope.abs() > f64::EPSILON {

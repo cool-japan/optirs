@@ -32,10 +32,8 @@
 // are declared for API-shape completeness but nothing in this module ever
 // increments them — read a `0` there as "not tracked," not "none occurred."
 
-#[allow(dead_code)]
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -315,8 +313,6 @@ pub enum CudaOperationType {
 pub struct CudaMemoryPool {
     /// Memory type
     memory_type: CudaMemoryType,
-    /// Pool handle (simulated)
-    handle: *mut c_void,
     /// Current size
     current_size: usize,
     /// Maximum size
@@ -344,7 +340,6 @@ impl CudaMemoryPool {
     pub fn new(memory_type: CudaMemoryType, max_size: usize) -> Self {
         Self {
             memory_type,
-            handle: std::ptr::null_mut(),
             current_size: 0,
             max_size,
             used_size: 0,
@@ -526,28 +521,39 @@ impl CudaStreamManager {
     }
 
     /// Create new stream
+    ///
+    /// Reuses a previously [`Self::destroy_stream`]d stream from
+    /// `stream_pool` when one is available (its operation queue is cleared
+    /// and it is given a fresh ID) instead of always allocating a new one.
     pub fn create_stream(&mut self, priority: Option<i32>) -> Result<u32, CudaError> {
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
 
-        let stream = CudaStream {
+        let mut stream = self.stream_pool.pop_front().unwrap_or_else(|| CudaStream {
             handle: std::ptr::null_mut(), // Would be actual CUDA stream
             id: stream_id,
             priority: priority.unwrap_or(self.config.default_priority),
             flags: CudaStreamFlags::default(),
             created_at: Instant::now(),
             operations: std::collections::VecDeque::new(),
-        };
+        });
+        stream.id = stream_id;
+        stream.priority = priority.unwrap_or(self.config.default_priority);
+        stream.created_at = Instant::now();
+        stream.operations.clear();
 
         self.streams.push(stream);
         Ok(stream_id)
     }
 
     /// Destroy stream
+    ///
+    /// Returns the stream to `stream_pool` for [`Self::create_stream`] to
+    /// reuse instead of dropping it outright.
     pub fn destroy_stream(&mut self, stream_id: u32) -> Result<(), CudaError> {
         if let Some(pos) = self.streams.iter().position(|s| s.id == stream_id) {
             let stream = self.streams.remove(pos);
-            // Clean up stream resources
+            self.stream_pool.push_back(stream);
             Ok(())
         } else {
             Err(CudaError::InvalidStream("Stream not found".to_string()))
@@ -818,7 +824,15 @@ impl CudaMemoryBackend {
         stream_id: u32,
     ) -> Result<(), CudaError> {
         let operation = CudaOperation {
-            op_type: CudaOperationType::MemcpyAsync,
+            // Mirrors the synchronous `memcpy`'s mapping above so the queued
+            // operation's recorded direction matches what the caller asked
+            // for instead of always reporting a generic `MemcpyAsync`.
+            op_type: match kind {
+                CudaMemcpyKind::HostToDevice => CudaOperationType::MemcpyHostToDevice,
+                CudaMemcpyKind::DeviceToHost => CudaOperationType::MemcpyDeviceToHost,
+                CudaMemcpyKind::DeviceToDevice => CudaOperationType::MemcpyDeviceToDevice,
+                CudaMemcpyKind::HostToHost => CudaOperationType::MemcpyAsync,
+            },
             src_ptr: Some(src as *mut c_void),
             dst_ptr: Some(dst),
             size,

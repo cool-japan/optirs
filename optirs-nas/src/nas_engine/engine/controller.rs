@@ -2,7 +2,6 @@
 
 use crate::error::Result;
 use crate::nas_engine::config::*;
-use crate::nas_engine::resources::*;
 use crate::nas_engine::results::*;
 use scirs2_core::numeric::Float;
 use scirs2_core::RngExt;

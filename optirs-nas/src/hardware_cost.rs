@@ -58,7 +58,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::hardware_cost::{HardwareCostModel, HardwareProfile, LayerSpec};
 //!
 //! let model = HardwareCostModel::new();

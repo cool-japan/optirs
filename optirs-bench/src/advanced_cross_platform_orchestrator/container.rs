@@ -4,7 +4,6 @@
 // support for isolated, reproducible testing environments.
 
 use crate::error::{OptimError, Result};
-use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
@@ -73,13 +72,69 @@ fn keep_alive_command(platform: &PlatformTarget) -> &'static [&'static str] {
 /// and `podman`) for `container_id` running `image` on `platform`. Factored
 /// out as a pure function so the keep-alive command placement is unit
 /// testable without a container runtime installed.
-fn create_args(container_id: &str, image: &str, platform: &PlatformTarget) -> Vec<String> {
+fn create_args(
+    container_id: &str,
+    image: &str,
+    platform: &PlatformTarget,
+    config: &ContainerConfig,
+) -> Vec<String> {
     let mut args = vec![
         "create".to_string(),
         "--name".to_string(),
         container_id.to_string(),
-        image.to_string(),
     ];
+
+    if let Some(cpu_limit) = config.resource_limits.cpu_limit {
+        args.push("--cpus".to_string());
+        args.push(cpu_limit.to_string());
+    }
+    if let Some(memory_limit) = config.resource_limits.memory_limit {
+        args.push("--memory".to_string());
+        args.push(format!("{memory_limit}m"));
+    }
+    if let Some(process_limit) = config.resource_limits.process_limit {
+        args.push("--pids-limit".to_string());
+        args.push(process_limit.to_string());
+    }
+
+    // `bridge` is docker/podman's own implicit default, so it is only spelled out
+    // explicitly when something other than the default was actually configured;
+    // this keeps the common case's argv identical to before this config was wired
+    // in at all.
+    let network_flag = match &config.network.mode {
+        NetworkMode::Bridge => None,
+        NetworkMode::Host => Some("host".to_string()),
+        NetworkMode::None => Some("none".to_string()),
+        NetworkMode::Overlay => Some("overlay".to_string()),
+        NetworkMode::Custom(name) => Some(name.clone()),
+    };
+    if let Some(network_flag) = network_flag {
+        args.push("--network".to_string());
+        args.push(network_flag);
+    }
+    for (host_port, container_port) in &config.network.port_mappings {
+        args.push("-p".to_string());
+        args.push(format!("{host_port}:{container_port}"));
+    }
+    for dns in &config.network.dns_servers {
+        args.push("--dns".to_string());
+        args.push(dns.clone());
+    }
+    for (host, ip) in &config.network.extra_hosts {
+        args.push("--add-host".to_string());
+        args.push(format!("{host}:{ip}"));
+    }
+
+    for volume in &config.volumes {
+        args.push("-v".to_string());
+        args.push(volume.clone());
+    }
+    for (key, value) in &config.env_vars {
+        args.push("-e".to_string());
+        args.push(format!("{key}={value}"));
+    }
+
+    args.push(image.to_string());
     args.extend(
         keep_alive_command(platform)
             .iter()
@@ -216,7 +271,7 @@ impl ContainerRuntimeTrait for DockerRuntime {
         // fabricating a "sim_" container. The trailing keep-alive command keeps the
         // container's main process running past `start`, so `docker exec` (used by
         // the orchestrator to run tests inside it) has something to attach to.
-        let args = create_args(&container_id, image, platform);
+        let args = create_args(&container_id, image, platform, &self.config);
         run_runtime_command(
             "docker",
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -282,7 +337,7 @@ impl ContainerRuntimeTrait for PodmanRuntime {
         // Actually invoke podman (mirror of the docker path, including the
         // keep-alive command -- see `keep_alive_command`). If podman is missing or
         // the command fails, propagate the real error instead of fabricating an id.
-        let args = create_args(&container_id, image, platform);
+        let args = create_args(&container_id, image, platform, &self.config);
         run_runtime_command(
             "podman",
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -327,6 +382,29 @@ impl ContainerRuntimeTrait for PodmanRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `ContainerConfig` with every optional/collection field empty, so
+    /// `create_args` emits no flags beyond the bare `create --name ID IMAGE`
+    /// baseline. `ContainerConfig::default()` is deliberately *not* this --
+    /// its resource limits are non-trivial (see `ContainerResourceLimits::default`)
+    /// precisely so a fresh `ContainerManager` runs with sane real limits.
+    fn empty_container_config() -> ContainerConfig {
+        ContainerConfig {
+            runtime: ContainerRuntime::Docker,
+            registry: RegistryConfig::default(),
+            image_tag_strategy: ImageTagStrategy::GitHash,
+            resource_limits: ContainerResourceLimits {
+                cpu_limit: None,
+                memory_limit: None,
+                network_limit: None,
+                io_limit: None,
+                process_limit: None,
+            },
+            network: ContainerNetworkConfig::default(),
+            volumes: vec![],
+            env_vars: Default::default(),
+        }
+    }
 
     #[test]
     fn test_container_manager_creation() {
@@ -392,6 +470,7 @@ mod tests {
             "test_container",
             "ubuntu:22.04",
             &PlatformTarget::LinuxX86_64,
+            &empty_container_config(),
         );
         assert_eq!(
             args,
@@ -417,7 +496,7 @@ mod tests {
             PlatformTarget::MacOSX86_64,
             PlatformTarget::MacOSAarch64,
         ] {
-            let args = create_args("c", "ubuntu:22.04", &platform);
+            let args = create_args("c", "ubuntu:22.04", &platform, &empty_container_config());
             assert_eq!(&args[4..], &["sleep", "infinity"], "platform: {platform:?}");
         }
 
@@ -425,8 +504,40 @@ mod tests {
             "c",
             "mcr.microsoft.com/windows/servercore:ltsc2022",
             &PlatformTarget::WindowsX86_64,
+            &empty_container_config(),
         );
         assert_eq!(&windows_args[4..], &["ping", "-t", "localhost"]);
+    }
+
+    #[test]
+    fn test_create_args_wires_resource_limits_volumes_and_env_vars() {
+        // The `config` field on `DockerRuntime`/`PodmanRuntime` used to be stashed
+        // but never actually consulted when building the container's argv --
+        // cpu/memory/process limits, non-default network mode, volumes, and
+        // environment variables were silently dropped. They must now show up.
+        let mut config = empty_container_config();
+        config.resource_limits.cpu_limit = Some(1.5);
+        config.resource_limits.memory_limit = Some(2048);
+        config.resource_limits.process_limit = Some(256);
+        config.network.mode = NetworkMode::Host;
+        config.volumes = vec!["/host/data:/data".to_string()];
+        config
+            .env_vars
+            .insert("OPTIRS_ENV".to_string(), "test".to_string());
+
+        let args = create_args("c", "img:latest", &PlatformTarget::LinuxX86_64, &config);
+
+        assert!(args.windows(2).any(|w| w == ["--cpus", "1.5"]));
+        assert!(args.windows(2).any(|w| w == ["--memory", "2048m"]));
+        assert!(args.windows(2).any(|w| w == ["--pids-limit", "256"]));
+        assert!(args.windows(2).any(|w| w == ["--network", "host"]));
+        assert!(args.windows(2).any(|w| w == ["-v", "/host/data:/data"]));
+        assert!(args.windows(2).any(|w| w == ["-e", "OPTIRS_ENV=test"]));
+        // The image and keep-alive tail must still come last, after every flag.
+        assert_eq!(
+            &args[args.len() - 3..],
+            &["img:latest", "sleep", "infinity"]
+        );
     }
 
     #[test]

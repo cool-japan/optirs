@@ -3,12 +3,12 @@
 // This example demonstrates the successful integration of OptiRS with SciRS2-Core,
 // showing how OptiRS now leverages the full SciRS2 ecosystem for scientific computing.
 
-use optirs_core::error::Result;
 use optirs_core::gradient_processing::{add_gradient_noise, GradientProcessor};
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::random::{Distribution, Normal, Random};
+use std::error::Error;
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("🚀 OptiRS SciRS2 Integration Demo");
     println!("================================");
 
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     // Demonstrate SciRS2 random number generation
     println!("\n2. SciRS2 Random Number Generation:");
     let mut rng = Random::default();
-    let normal = Normal::new(0.0, 0.1).expect("unwrap failed");
+    let normal = Normal::new(0.0, 0.1)?;
     let random_values: Vec<f64> = (0..5).map(|_| normal.sample(&mut rng)).collect();
     println!("   Random noise: {:?}", random_values);
 

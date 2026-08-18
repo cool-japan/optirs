@@ -23,13 +23,6 @@ pub enum VulnerabilityCategory {
     InputValidation,
     Other(String),
 }
-#[derive(Debug)]
-pub(super) struct LicenseDatabase;
-impl LicenseDatabase {
-    pub(super) fn new() -> Self {
-        Self
-    }
-}
 /// Report format options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReportFormat {
@@ -213,8 +206,6 @@ pub enum RiskLevel {
     High,
     Critical,
 }
-#[derive(Debug)]
-pub(super) struct PackageMetadata;
 /// A dependency as declared in a `Cargo.toml` dependency table, before
 /// resolution. Captures enough shape to support F8's "all forms" parsing:
 /// plain string version, inline table, `[dependencies.foo]` sub-table, and
@@ -303,59 +294,57 @@ pub struct VulnerableDependency {
     /// CVE identifiers
     pub cve_ids: Vec<String>,
 }
-/// Dependency scanner for vulnerability detection
+/// Dependency scanner for vulnerability detection.
+///
+/// `vuln_db_client`/`license_db`/`package_cache` fields from an earlier,
+/// stateful-online-lookup design were removed: [`scan_dependencies_offline`]
+/// (the real, working implementation `scan_dependencies` delegates to) is a
+/// pure function of a project path and this `config`, so those fields were
+/// never read by anything -- genuinely superseded scaffolding, not a feature
+/// gap.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct DependencyScanner {
     /// Scanner configuration
     pub(super) config: DependencyScanConfig,
-    /// Vulnerability database client
-    pub(super) vuln_db_client: VulnerabilityDatabaseClient,
-    /// License database
-    pub(super) license_db: LicenseDatabase,
-    /// Package metadata cache
-    pub(super) package_cache: HashMap<String, PackageMetadata>,
 }
 impl DependencyScanner {
     pub(super) fn new(config: DependencyScanConfig) -> Self {
-        Self {
-            config: DependencyScanConfig::default(),
-            vuln_db_client: VulnerabilityDatabaseClient::new(),
-            license_db: LicenseDatabase::new(),
-            package_cache: HashMap::new(),
-        }
+        Self { config }
     }
     pub(super) fn scan_dependencies(&mut self, projectpath: &Path) -> Result<DependencyScanResult> {
-        scan_dependencies_offline(projectpath)
+        scan_dependencies_offline(projectpath, &self.config)
     }
 }
-/// Vulnerability database for tracking known security issues
+/// Vulnerability database for tracking known security issues.
+///
+/// `local_cache`/`external_sources` fields from an earlier online-lookup
+/// design were removed along with the `config` fields that only ever
+/// initialized them: nothing populates or reads a local cache, and fetching
+/// from `external_sources` would mean giving this offline-only scanner (see
+/// [`scan_dependencies_offline`]) a registry client, which is a real feature
+/// addition, not a mechanical wire-up. `auto_update` and `update_frequency`
+/// -- the two `VulnerabilityDatabaseConfig` fields [`Self::needs_update`]
+/// can actually honor without that -- are kept.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct VulnerabilityDatabase {
-    /// Database configuration
-    pub(super) config: VulnerabilityDatabaseConfig,
-    /// Local vulnerability cache
-    pub(super) local_cache: HashMap<String, CachedVulnerability>,
+    /// Whether automatic updates are enabled.
+    pub(super) auto_update: bool,
     /// Database update status
     pub(super) last_update: SystemTime,
     /// Update frequency
     pub(super) update_frequency: Duration,
-    /// External database sources
-    pub(super) external_sources: Vec<ExternalVulnerabilitySource>,
 }
 impl VulnerabilityDatabase {
     pub(super) fn new(config: VulnerabilityDatabaseConfig) -> Self {
         Self {
-            config: VulnerabilityDatabaseConfig::default(),
-            local_cache: HashMap::new(),
+            auto_update: config.auto_update,
             last_update: SystemTime::now(),
-            update_frequency: Duration::from_secs(24 * 60 * 60),
-            external_sources: Vec::new(),
+            update_frequency: config.update_frequency,
         }
     }
     pub(super) fn needs_update(&self) -> bool {
-        self.last_update.elapsed().unwrap_or(Duration::from_secs(0)) > self.update_frequency
+        self.auto_update
+            && self.last_update.elapsed().unwrap_or(Duration::from_secs(0)) > self.update_frequency
     }
     pub(super) fn update_from_sources(&mut self) -> Result<()> {
         self.last_update = SystemTime::now();
@@ -563,13 +552,6 @@ impl SecurityPolicyEnforcer {
         _audit_result: &SecurityAuditResult,
     ) -> Result<PolicyComplianceResult> {
         Ok(PolicyComplianceResult::default())
-    }
-}
-#[derive(Debug)]
-pub(super) struct VulnerabilityDatabaseClient;
-impl VulnerabilityDatabaseClient {
-    pub(super) fn new() -> Self {
-        Self
     }
 }
 #[derive(Debug)]

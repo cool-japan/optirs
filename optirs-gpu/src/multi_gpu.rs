@@ -127,8 +127,6 @@ pub struct CommunicationPerformanceMonitor {
     bandwidth_history: std::collections::VecDeque<f64>,
     /// Strategy performance tracking
     strategy_performance: std::collections::HashMap<SyncStrategy, StrategyPerformanceMetrics>,
-    /// Current optimal strategy
-    optimal_strategy: SyncStrategy,
 }
 
 impl CommunicationPerformanceMonitor {
@@ -139,11 +137,16 @@ impl CommunicationPerformanceMonitor {
             comm_operations: 0,
             bandwidth_history: std::collections::VecDeque::with_capacity(1000),
             strategy_performance: std::collections::HashMap::new(),
-            optimal_strategy: SyncStrategy::RingAllReduce,
         }
     }
 
-    fn record_communication(&mut self, strategy: SyncStrategy, data_bytes: u64, timeus: u64) {
+    fn record_communication(
+        &mut self,
+        strategy: SyncStrategy,
+        data_bytes: u64,
+        timeus: u64,
+        tensor_size: usize,
+    ) {
         // A sub-microsecond elapsed time is real (small local ops legitimately
         // take under 1us), but dividing by it is not: clamp to 1us so the
         // bandwidth estimate is merely optimistic instead of `inf`/`NaN`.
@@ -164,7 +167,7 @@ impl CommunicationPerformanceMonitor {
             .strategy_performance
             .entry(strategy)
             .or_insert_with(StrategyPerformanceMetrics::new);
-        metrics.update(bandwidth_gb_s, timeus);
+        metrics.update(bandwidth_gb_s, timeus, tensor_size);
     }
 
     fn get_average_bandwidth(&self) -> f64 {
@@ -210,13 +213,15 @@ impl StrategyPerformanceMetrics {
         }
     }
 
-    fn update(&mut self, bandwidth_gb_s: f64, latencyus: u64) {
+    fn update(&mut self, bandwidth_gb_s: f64, latencyus: u64, tensor_size: usize) {
         self.bandwidth_samples.push_back(bandwidth_gb_s);
         self.latency_samples.push_back(latencyus);
+        self.tensor_sizes.push_back(tensor_size);
 
         if self.bandwidth_samples.len() > 100 {
             self.bandwidth_samples.pop_front();
             self.latency_samples.pop_front();
+            self.tensor_sizes.pop_front();
         }
 
         // Update efficiency score based on recent performance
@@ -231,7 +236,25 @@ impl StrategyPerformanceMetrics {
     fn calculate_score(&self, tensorsize: usize) -> f64 {
         // Higher score for better efficiency, adjusted for tensor _size
         let size_factor = if tensorsize > 1000000 { 2.0 } else { 1.0 }; // Favor strategies for large tensors
-        self.efficiency_score * size_factor
+
+        // Trust this strategy's efficiency score less when it has no track
+        // record at a comparable tensor size (within 10x): bandwidth and
+        // latency measured on very differently-sized transfers may not
+        // generalize to this one. A strategy with no history at all is not
+        // penalized further here -- its `efficiency_score` already starts
+        // at 0.0 until `update` has run at least once.
+        let has_comparable_history = self.tensor_sizes.is_empty()
+            || self.tensor_sizes.iter().any(|&recorded| {
+                let (small, large) = if recorded <= tensorsize {
+                    (recorded.max(1), tensorsize.max(1))
+                } else {
+                    (tensorsize.max(1), recorded)
+                };
+                large <= small * 10
+            });
+        let relevance = if has_comparable_history { 1.0 } else { 0.5 };
+
+        self.efficiency_score * size_factor * relevance
     }
 }
 
@@ -244,7 +267,21 @@ pub struct AdaptiveCommunicationSelector {
     switch_cooldown: usize,
     /// Last switch step
     last_switch_step: usize,
-    /// Evaluation window (steps)
+    /// Evaluation window (steps).
+    ///
+    /// Not currently consulted by [`Self::should_evaluate_strategy`] or
+    /// [`Self::evaluate_and_switch`]: `switch_cooldown` (steps since the
+    /// last switch) is the only gate implemented today. Whether
+    /// `evaluation_window` should instead gate how often a potential
+    /// switch is *checked for* (independent of `switch_cooldown`, which
+    /// gates when a switch may actually happen), or how much recent
+    /// history `evaluate_and_switch` compares (as opposed to each
+    /// strategy's full rolling `efficiency_score`), is a scheduling-policy
+    /// decision this lint pass is not making unilaterally -- especially
+    /// since the two fields' default values (50 and 20) are not a clean
+    /// multiple of each other, so guessing the intended relationship risks
+    /// getting it wrong. Recorded as a finding rather than force-wired.
+    #[allow(dead_code)]
     evaluation_window: usize,
     /// Performance threshold for strategy switching
     performance_threshold: f64,
@@ -471,6 +508,7 @@ impl<A: Float + GpuDataType + Send + Sync> MultiGpuSync<A> {
             strategy,
             data_bytes as u64,
             elapsed.as_micros() as u64,
+            tensor_size,
         );
 
         // Periodic monitoring output
@@ -851,8 +889,8 @@ mod tests {
         let mut monitor = CommunicationPerformanceMonitor::new();
 
         // Record some communications
-        monitor.record_communication(SyncStrategy::RingAllReduce, 1000000, 1000); // 1GB/s
-        monitor.record_communication(SyncStrategy::TreeAllReduce, 2000000, 1000); // 2GB/s
+        monitor.record_communication(SyncStrategy::RingAllReduce, 1000000, 1000, 1000000); // 1GB/s
+        monitor.record_communication(SyncStrategy::TreeAllReduce, 2000000, 1000, 1000000); // 2GB/s
 
         assert_eq!(monitor.comm_operations, 2);
         assert!(monitor.get_average_bandwidth() > 0.0);
@@ -870,7 +908,7 @@ mod tests {
     #[test]
     fn record_communication_clamps_zero_elapsed_time() {
         let mut monitor = CommunicationPerformanceMonitor::new();
-        monitor.record_communication(SyncStrategy::RingAllReduce, 1_000_000, 0);
+        monitor.record_communication(SyncStrategy::RingAllReduce, 1_000_000, 0, 1_000_000);
         let avg = monitor.get_average_bandwidth();
         assert!(avg.is_finite(), "average bandwidth was not finite: {avg}");
         assert!(avg > 0.0);
@@ -892,7 +930,7 @@ mod tests {
 
         // Record better performance for tree all-reduce
         for _ in 0..10 {
-            monitor.record_communication(SyncStrategy::TreeAllReduce, 1000000, 500);
+            monitor.record_communication(SyncStrategy::TreeAllReduce, 1000000, 500, 1000000);
             // Better bandwidth
         }
 
@@ -931,13 +969,34 @@ mod tests {
     fn test_strategy_performance_metrics() {
         let mut metrics = StrategyPerformanceMetrics::new();
 
-        metrics.update(10.0, 1000); // 10 GB/s, 1ms
-        metrics.update(15.0, 800); // 15 GB/s, 0.8ms
+        metrics.update(10.0, 1000, 1000000); // 10 GB/s, 1ms
+        metrics.update(15.0, 800, 1000000); // 15 GB/s, 0.8ms
 
         assert!(metrics.efficiency_score > 0.0);
 
         let score = metrics.calculate_score(1000000); // Large tensor
         assert!(score > 0.0);
+    }
+
+    /// `calculate_score` must genuinely use recorded tensor sizes (not just
+    /// accept and discard them): a strategy whose entire track record is at
+    /// one scale should be trusted less when scored against a tensor size
+    /// three orders of magnitude away, versus a size close to what it has
+    /// actually proven itself on.
+    #[test]
+    fn test_calculate_score_discounts_unfamiliar_tensor_sizes() {
+        let mut metrics = StrategyPerformanceMetrics::new();
+        metrics.update(10.0, 1000, 1_000_000);
+        metrics.update(10.0, 1000, 1_000_000);
+
+        let familiar = metrics.calculate_score(1_000_000);
+        let unfamiliar = metrics.calculate_score(1_000);
+
+        assert!(
+            unfamiliar < familiar,
+            "score for an unfamiliar tensor size ({unfamiliar}) should be lower than for a \
+             size this strategy has a track record at ({familiar})"
+        );
     }
 
     #[test]

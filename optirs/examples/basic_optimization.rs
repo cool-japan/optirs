@@ -8,7 +8,8 @@
 use optirs_core::optimizers::{Adam, AdamW, Optimizer, SGD};
 use scirs2_core::ndarray::Array1;
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{thread_rng, Rng};
+use scirs2_core::random::thread_rng;
+use std::error::Error;
 
 /// Simple quadratic function: f(x) = (x - 5)^2
 fn quadratic_function(x: f64) -> f64 {
@@ -21,7 +22,7 @@ fn quadratic_gradient(x: f64) -> f64 {
 }
 
 /// Demonstrate SGD optimization
-fn demonstrate_sgd() {
+fn demonstrate_sgd() -> Result<(), Box<dyn Error>> {
     println!("=== SGD Optimization ===");
 
     let mut params = Array1::from_vec(vec![0.0]); // Start at x=0
@@ -35,7 +36,7 @@ fn demonstrate_sgd() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).expect("unwrap failed");
+        params = optimizer.step(&params, &gradient)?;
 
         if step % 5 == 4 {
             println!(
@@ -53,10 +54,11 @@ fn demonstrate_sgd() {
         quadratic_function(params[0])
     );
     println!("Target: x = 5.0, f(x) = 0.0\n");
+    Ok(())
 }
 
 /// Demonstrate Adam optimization
-fn demonstrate_adam() {
+fn demonstrate_adam() -> Result<(), Box<dyn Error>> {
     println!("=== Adam Optimization ===");
 
     let mut params = Array1::from_vec(vec![0.0]); // Start at x=0
@@ -70,7 +72,7 @@ fn demonstrate_adam() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).expect("unwrap failed");
+        params = optimizer.step(&params, &gradient)?;
 
         if step % 5 == 4 {
             println!(
@@ -88,10 +90,11 @@ fn demonstrate_adam() {
         quadratic_function(params[0])
     );
     println!("Target: x = 5.0, f(x) = 0.0\n");
+    Ok(())
 }
 
 /// Demonstrate AdamW optimization with weight decay
-fn demonstrate_adamw() {
+fn demonstrate_adamw() -> Result<(), Box<dyn Error>> {
     println!("=== AdamW Optimization (with weight decay) ===");
 
     let mut params = Array1::from_vec(vec![0.0]); // Start at x=0
@@ -105,7 +108,7 @@ fn demonstrate_adamw() {
 
     for step in 0..20 {
         let gradient = Array1::from_vec(vec![quadratic_gradient(params[0])]);
-        params = optimizer.step(&params, &gradient).expect("unwrap failed");
+        params = optimizer.step(&params, &gradient)?;
 
         if step % 5 == 4 {
             println!(
@@ -123,10 +126,11 @@ fn demonstrate_adamw() {
         quadratic_function(params[0])
     );
     println!("Target: x = 5.0, f(x) = 0.0\n");
+    Ok(())
 }
 
 /// Demonstrate multi-dimensional optimization
-fn demonstrate_multidimensional() {
+fn demonstrate_multidimensional() -> Result<(), Box<dyn Error>> {
     println!("=== Multi-dimensional Optimization ===");
     println!("Function: f(x, y) = (x - 3)^2 + (y + 2)^2");
     println!("Target: x = 3.0, y = -2.0\n");
@@ -144,7 +148,7 @@ fn demonstrate_multidimensional() {
         let gradients = Array1::from_vec(vec![grad_x, grad_y]);
 
         // Update parameters
-        params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        params = optimizer.step(&params, &gradients)?;
 
         if step % 10 == 9 {
             let loss = (params[0] - 3.0).powi(2) + (params[1] + 2.0).powi(2);
@@ -163,10 +167,11 @@ fn demonstrate_multidimensional() {
         "\nFinal: x = {:.4}, y = {:.4}, loss = {:.6}",
         params[0], params[1], final_loss
     );
+    Ok(())
 }
 
 /// Demonstrate SciRS2 random number generation integration
-fn demonstrate_scirs2_random() {
+fn demonstrate_scirs2_random() -> Result<(), Box<dyn Error>> {
     println!("=== SciRS2 Random Integration ===");
 
     let mut rng = thread_rng();
@@ -188,7 +193,7 @@ fn demonstrate_scirs2_random() {
         let grad_y = 2.0 * (params[1] + 2.0);
         let gradients = Array1::from_vec(vec![grad_x, grad_y]);
 
-        params = optimizer.step(&params, &gradients).expect("unwrap failed");
+        params = optimizer.step(&params, &gradients)?;
 
         if step == 49 {
             let loss = (params[0] - 3.0).powi(2) + (params[1] + 2.0).powi(2);
@@ -202,18 +207,19 @@ fn demonstrate_scirs2_random() {
         }
     }
     println!();
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     println!("OptiRS - Basic Optimization Examples");
     println!("Demonstrating SciRS2-Core Integration");
     println!("=====================================\n");
 
-    demonstrate_sgd();
-    demonstrate_adam();
-    demonstrate_adamw();
-    demonstrate_multidimensional();
-    demonstrate_scirs2_random();
+    demonstrate_sgd()?;
+    demonstrate_adam()?;
+    demonstrate_adamw()?;
+    demonstrate_multidimensional()?;
+    demonstrate_scirs2_random()?;
 
     println!("All examples completed successfully!");
     println!("\nKey Features Demonstrated:");
@@ -222,4 +228,5 @@ fn main() {
     println!("✓ Multiple optimizer types (SGD, Adam, AdamW)");
     println!("✓ Single and multi-dimensional optimization");
     println!("✓ Convergence to optimal solutions");
+    Ok(())
 }

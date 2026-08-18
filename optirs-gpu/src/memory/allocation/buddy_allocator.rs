@@ -4,7 +4,6 @@
 // power-of-2 sized blocks in a binary tree structure for efficient
 // allocation and deallocation with minimal fragmentation.
 
-#[allow(dead_code)]
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -77,24 +76,29 @@ impl BuddyBlock {
         self.access_count += 1;
     }
 
-    /// Get buddy address for this block
-    pub fn get_buddy_address(&self, min_block_size: usize) -> *mut u8 {
-        let offset = self.ptr as usize;
-        let buddy_offset = offset ^ self.size;
-        buddy_offset as *mut u8
+    /// Get buddy address for this block.
+    ///
+    /// The classic buddy-system XOR trick (`offset ^ size`) only identifies
+    /// the true buddy when `offset` is measured relative to a base every
+    /// block shares. `base_ptr` (the allocator's arena base, e.g.
+    /// [`BuddyAllocator::base_ptr`]) must be that shared base: XOR-ing the
+    /// raw absolute pointer would only coincidentally find the real buddy,
+    /// since a real heap allocation's address is not generally a multiple
+    /// of the arena's total size.
+    pub fn get_buddy_address(&self, base_ptr: *mut u8) -> *mut u8 {
+        let relative_offset = (self.ptr as usize).wrapping_sub(base_ptr as usize);
+        let buddy_relative = relative_offset ^ self.size;
+        (base_ptr as usize).wrapping_add(buddy_relative) as *mut u8
     }
 
-    /// Check if two blocks are buddies
-    pub fn is_buddy_of(&self, other: &BuddyBlock, min_block_size: usize) -> bool {
+    /// Check if two blocks are buddies, relative to the allocator's
+    /// `base_ptr` (see [`Self::get_buddy_address`]).
+    pub fn is_buddy_of(&self, other: &BuddyBlock, base_ptr: *mut u8) -> bool {
         if self.size != other.size {
             return false;
         }
 
-        let self_offset = self.ptr as usize;
-        let other_offset = other.ptr as usize;
-        let buddy_offset = self_offset ^ self.size;
-
-        other_offset == buddy_offset
+        other.ptr == self.get_buddy_address(base_ptr)
     }
 }
 
@@ -367,14 +371,13 @@ impl BuddyAllocator {
     /// Find a free block of at least the specified order
     fn find_free_block(&mut self, min_order: usize) -> Option<BuddyBlock> {
         // Look for exact fit first
-        if !self.free_lists[min_order].is_empty() {
-            return self.free_lists[min_order].pop_front();
+        if let Some(exact) = self.free_lists[min_order].pop_front() {
+            return Some(exact);
         }
 
         // Look for larger blocks and split them
         for order in (min_order + 1)..=self.max_order {
-            if !self.free_lists[order].is_empty() {
-                let large_block = self.free_lists[order].pop_front().expect("unwrap failed");
+            if let Some(large_block) = self.free_lists[order].pop_front() {
                 return Some(self.split_block(large_block, min_order));
             }
         }
@@ -412,36 +415,38 @@ impl BuddyAllocator {
 
         // Try to coalesce with buddy blocks
         while current_block.order < self.max_order {
-            let buddy_addr = current_block.get_buddy_address(self.min_block_size);
+            let buddy_addr = current_block.get_buddy_address(self.base_ptr);
 
-            // Look for buddy in the same order free list
-            let buddy_pos = self.free_lists[current_block.order]
+            // Look for buddy in the same order free list.
+            let Some(pos) = self.free_lists[current_block.order]
                 .iter()
-                .position(|b| b.ptr == buddy_addr);
-
-            if let Some(pos) = buddy_pos {
-                // Found buddy, remove it and coalesce
-                let buddy = self.free_lists[current_block.order]
-                    .remove(pos)
-                    .expect("unwrap failed");
-                self.stats.record_merge();
-
-                // Create coalesced block
-                let coalesced_ptr = if current_block.ptr < buddy.ptr {
-                    current_block.ptr
-                } else {
-                    buddy.ptr
-                };
-
-                current_block = BuddyBlock::new(
-                    coalesced_ptr,
-                    current_block.size * 2,
-                    current_block.order + 1,
-                );
-            } else {
-                // No buddy found, stop coalescing
+                .position(|b| b.ptr == buddy_addr)
+            else {
+                // No buddy found, stop coalescing.
                 break;
-            }
+            };
+
+            // `pos` was just found in this exact list, so removal is
+            // guaranteed to succeed; the `else` bails out defensively
+            // (stopping coalescing for this block) rather than panicking
+            // if that invariant were ever violated.
+            let Some(buddy) = self.free_lists[current_block.order].remove(pos) else {
+                break;
+            };
+            self.stats.record_merge();
+
+            // Create coalesced block
+            let coalesced_ptr = if current_block.ptr < buddy.ptr {
+                current_block.ptr
+            } else {
+                buddy.ptr
+            };
+
+            current_block = BuddyBlock::new(
+                coalesced_ptr,
+                current_block.size * 2,
+                current_block.order + 1,
+            );
         }
 
         // Add final block to appropriate free list
@@ -481,7 +486,7 @@ impl BuddyAllocator {
 
             while !blocks_to_process.is_empty() {
                 let current = blocks_to_process.remove(0);
-                let buddy_addr = current.get_buddy_address(self.min_block_size);
+                let buddy_addr = current.get_buddy_address(self.base_ptr);
 
                 // Look for buddy in remaining blocks
                 if let Some(buddy_pos) = blocks_to_process.iter().position(|b| b.ptr == buddy_addr)
@@ -833,13 +838,17 @@ mod tests {
         allocator.deallocate(ptr2).expect("unwrap failed");
 
         let stats = allocator.get_stats();
-        // If no coalescing occurred, skip the test as it's implementation-dependent
-        // Some buddy allocator implementations might not coalesce immediately
-        if stats.merge_operations == 0 {
-            println!("Coalescing test skipped: implementation doesn't trigger coalescing for this pattern");
-            return;
-        }
-        assert!(stats.merge_operations > 0);
+        // `memory` is a real heap allocation, so `ptr` is an arbitrary
+        // (non-zero, not power-of-two-aligned-to-`size`) address -- this is
+        // a regression test for the buddy-address computation being
+        // relative to the arena's `base_ptr` rather than the raw absolute
+        // pointer (see `BuddyBlock::get_buddy_address`): with the wrong
+        // (absolute) formula, this real address essentially never finds its
+        // true buddy and coalescing silently never happens.
+        assert!(
+            stats.merge_operations > 0,
+            "two adjacent same-size blocks with a real (non-zero) base pointer must coalesce"
+        );
     }
 
     #[test]

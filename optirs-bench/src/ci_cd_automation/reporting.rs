@@ -9,18 +9,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use super::config::{
-    ChartStyleConfig, ColorTheme, ReportDistributionConfig, ReportStylingConfig,
-    ReportTemplateConfig, ReportingConfig,
-};
-use super::test_execution::{
-    CiCdTestResult, RegressionAnalysisResult, ResourceUsageReport, TestExecutionStatus,
-    TestSuiteStatistics,
-};
+use super::config::ReportingConfig;
+use super::test_execution::{CiCdTestResult, TestExecutionStatus, TestSuiteStatistics};
 
 /// Report generator for CI/CD automation results
 #[derive(Debug, Clone)]
@@ -1343,8 +1336,6 @@ impl Default for AnimationConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ci_cd_automation::test_execution::TestSuiteStatistics;
-    use std::time::Duration;
 
     #[test]
     fn test_report_generator_creation() {

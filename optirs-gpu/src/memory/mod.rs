@@ -423,8 +423,7 @@ impl GpuMemorySystem {
         let memory_regions: HashMap<usize, management::MemoryRegion> = self
             .memory_regions
             .iter()
-            .enumerate()
-            .map(|(i, (ptr, alloc))| {
+            .map(|(ptr, alloc)| {
                 let mut objects = HashMap::new();
                 objects.insert(
                     *ptr as usize,
@@ -486,8 +485,7 @@ impl GpuMemorySystem {
             let memory_regions: HashMap<usize, management::MemoryRegion> = self
                 .memory_regions
                 .iter()
-                .enumerate()
-                .map(|(i, (ptr, alloc))| {
+                .map(|(ptr, alloc)| {
                     let mut objects = HashMap::new();
                     objects.insert(
                         *ptr as usize,
@@ -551,7 +549,7 @@ impl GpuMemorySystem {
     }
 
     /// Update allocation statistics
-    fn update_allocation_stats(&mut self, size: usize, duration: Duration) {
+    fn update_allocation_stats(&mut self, size: usize, _duration: Duration) {
         self.stats.total_allocations += 1;
         self.stats.bytes_allocated += size as u64;
         self.stats.active_allocations += 1;

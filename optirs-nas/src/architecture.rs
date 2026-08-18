@@ -4,7 +4,6 @@
 //! including the search space definition, architecture encoding/decoding,
 //! and mutation/crossover operations for evolutionary algorithms.
 
-use scirs2_core::numeric::Float;
 use scirs2_core::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -288,7 +287,6 @@ impl ArchitectureSpace {
 
     /// Generate a random architecture within this search space
     pub fn generate_random_architecture(&self) -> Architecture {
-        use scirs2_core::random::Rng;
         let mut rng = scirs2_core::random::Random::default();
 
         let num_components = rng.gen_range(self.min_components..=self.max_components);
@@ -369,7 +367,6 @@ impl ArchitectureSpace {
         architecture: &Architecture,
         mutation_rate: f64,
     ) -> Architecture {
-        use scirs2_core::random::Rng;
         let mut rng = scirs2_core::random::Random::default();
         let mut mutated = architecture.clone();
         mutated.id = format!("{}_{}_mut", architecture.id, rng.random::<u32>());
@@ -441,7 +438,6 @@ impl ArchitectureSpace {
         parent1: &Architecture,
         parent2: &Architecture,
     ) -> (Architecture, Architecture) {
-        use scirs2_core::random::Rng;
         let mut rng = scirs2_core::random::Random::default();
 
         let mut child1 = parent1.clone();

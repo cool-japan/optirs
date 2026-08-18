@@ -668,9 +668,15 @@ impl AutomatedTestRunner {
     }
 
     /// Execute test for a specific platform
+    // NOTE: `config` is intentionally unused. `config.test_timeout_seconds` is not
+    // enforced here: `tester.run_test_suite()` below runs to completion
+    // synchronously with no cancellation hook, so bounding it for real would mean
+    // running it on a worker thread and joining with a timeout (and deciding what
+    // to do with a still-running thread on timeout) -- a real concurrency change,
+    // not a mechanical read of this parameter, so it is left as a tracked gap.
     fn execute_platform_test(
         execution: &mut TestExecution,
-        config: &AutomatedRunnerConfig,
+        _config: &AutomatedRunnerConfig,
     ) -> Result<()> {
         let start_time = Instant::now();
 

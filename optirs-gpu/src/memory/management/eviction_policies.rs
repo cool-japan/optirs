@@ -4,10 +4,8 @@
 // GPU memory efficiently by determining which data should be removed when
 // memory pressure occurs.
 
-#[allow(dead_code)]
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// Main eviction engine that manages multiple eviction policies

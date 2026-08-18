@@ -4,11 +4,10 @@
 //! 16 GB used, 60% CPU, 4 GPUs at 80%, 1 TB disk half full, 1 GB/s network, 65 C,
 //! 250 W — all hard-coded literals behind
 //! `// In a real implementation, this would query system APIs`. Those numbers were
-//! then compared against the user's [`ResourceConstraints`], so a search
+//! then compared against the user's
+//! [`crate::nas_engine::config::ResourceConstraints`], so a search
 //! configured with (say) an 8 GB memory budget aborted immediately on the strength
 //! of an invented 16 GB reading.
-//!
-//! [`crate::nas_engine::config::ResourceConstraints`]
 //!
 //! The rule here is: **report only what can actually be measured, and `None`
 //! otherwise.** Consumers must treat `None` as "unconstrained", never as zero and

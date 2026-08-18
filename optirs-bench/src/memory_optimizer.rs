@@ -1547,8 +1547,53 @@ impl MemoryLeakDetector {
         Ok(())
     }
 
+    /// Real growth-trend leak check: OLS-regress `used_memory` against snapshot
+    /// order and flag a `GrowthLeak` only when the upward slope is both
+    /// statistically significant (p < 0.05) and a good fit (R² > 0.5) -- not
+    /// just noisy churn. This replaced an always-`Ok(())` stub that reported no
+    /// leaks regardless of actual memory behavior.
     fn check_for_leaks(&mut self, snapshots: &VecDeque<MemorySnapshot>) -> Result<()> {
-        // Run leak detection algorithms
+        self.detected_leaks.clear();
+        if snapshots.len() < 3 {
+            return Ok(());
+        }
+
+        let usage_series: Vec<f64> = snapshots
+            .iter()
+            .map(|snapshot| snapshot.usage.used_memory as f64)
+            .collect();
+        let Some(trend) = crate::regression_tester::distributions::linear_regression(&usage_series)
+        else {
+            return Ok(());
+        };
+
+        if trend.slope > 0.0 && trend.p_value < 0.05 && trend.r_squared > 0.5 {
+            let severity = if trend.slope > 1_000_000.0 {
+                LeakSeverity::Critical
+            } else if trend.slope > 100_000.0 {
+                LeakSeverity::High
+            } else if trend.slope > 10_000.0 {
+                LeakSeverity::Medium
+            } else {
+                LeakSeverity::Low
+            };
+            self.detected_leaks.push(MemoryLeak {
+                leak_type: LeakType::GrowthLeak,
+                leak_rate: trend.slope,
+                confidence: trend.r_squared.clamp(0.0, 1.0),
+                source_location: None,
+                stack_trace: None,
+                first_detected: snapshots
+                    .front()
+                    .map(|snapshot| snapshot.timestamp)
+                    .unwrap_or_else(Instant::now),
+                severity,
+                suggested_fix: "Sustained statistically-significant memory growth detected; \
+                    check for unreleased allocations or unbounded accumulating collections."
+                    .to_string(),
+            });
+        }
+
         Ok(())
     }
 
@@ -1593,11 +1638,16 @@ impl OptimizationEngine {
         }
     }
 
+    // NOTE: `tracker` is intentionally unused. This always returns the same
+    // fixed "add memory pooling" recommendation regardless of the tracker's
+    // actual allocation pattern; producing varied, tracker-driven recommendations
+    // needs real allocation-pattern analysis (which pattern implies which fix),
+    // which is a genuine feature, not a mechanical use of this parameter. Tracked
+    // as a gap.
     fn generate_recommendations(
         &mut self,
-        tracker: &AdvancedMemoryTracker,
+        _tracker: &AdvancedMemoryTracker,
     ) -> Vec<MemoryOptimizationRecommendation> {
-        // Generate optimization recommendations
         vec![MemoryOptimizationRecommendation {
             recommendation_type: OptimizationType::AddMemoryPooling,
             priority: Priority::High,
@@ -1636,9 +1686,15 @@ impl OptimizationEngine {
         }]
     }
 
+    // NOTE: `recommendations` is intentionally unused. This returns fixed
+    // totals/ROI regardless of which (or how many) recommendations were passed;
+    // `self.cost_models`/`self.benefit_models` are never populated anywhere in
+    // this module for a real per-recommendation cost/benefit lookup to draw on.
+    // Building that costing model is a genuine feature, not a mechanical
+    // aggregation of an existing input. Tracked as a gap.
     fn analyze_cost_benefit(
         &self,
-        recommendations: &[MemoryOptimizationRecommendation],
+        _recommendations: &[MemoryOptimizationRecommendation],
     ) -> CostBenefitReport {
         CostBenefitReport {
             total_potential_savings: 2000.0,
@@ -1685,8 +1741,15 @@ impl MemoryPatternAnalyzer {
         Ok(())
     }
 
-    fn analyze_snapshot(&mut self, snapshot: &MemorySnapshot) -> Result<()> {
-        // Analyze memory patterns in _snapshot
+    // NOTE: `snapshot` is intentionally unused. This never populates
+    // `detected_patterns`/`pattern_history`, so `get_detected_patterns` (used by
+    // `MemoryOptimizer::generate_optimization_report`, unlike `check_for_leaks`'s
+    // now-real growth check) always reports no patterns. A real classifier needs
+    // to distinguish six pattern types (SteadyState/Periodic/Growing/Bursty/
+    // Random/Seasonal) -- periodicity and burst detection beyond the single
+    // linear-regression check used for leak detection above -- so it is left as a
+    // tracked gap rather than a partial classifier.
+    fn analyze_snapshot(&mut self, _snapshot: &MemorySnapshot) -> Result<()> {
         Ok(())
     }
 

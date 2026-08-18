@@ -1,6 +1,22 @@
 //! Benchmark suite for evaluating optimizer architectures
 //!
 //! Provides comprehensive benchmark tests and test functions.
+//!
+//! # Custom benchmarks
+//!
+//! `CustomBenchmark`, `CustomBenchmarkConfig`, `ProblemDefinition` and
+//! `CustomEvaluator` used to be declared here, and [`BenchmarkSuite`] held a
+//! `custom_benchmarks` vector of them. Nothing could register one (there was no
+//! adder) and nothing could run one: `CustomEvaluator` described an evaluator with
+//! an `EvaluatorType` tag and a parameter map — it carried no callable, so the
+//! suite had no way to obtain a value from it. The types are gone rather than left
+//! as a public vocabulary for a feature the suite cannot execute; running
+//! caller-supplied problems needs an executable evaluator trait first.
+//!
+//! Result caching lives one level up, in [`crate::evaluation::EvaluationCache`],
+//! which is bounded and has an eviction policy. The suite's own `results_cache`
+//! field was never read or written and would have double-counted the empirical
+//! score history that drives percentile ranks.
 
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
@@ -50,73 +66,6 @@ pub struct StandardBenchmark<T: Float + Debug + Send + Sync + 'static> {
 
     /// Resource requirements
     pub resource_requirements: ResourceRequirements,
-}
-
-/// Custom benchmark test
-#[derive(Debug, Clone)]
-pub struct CustomBenchmark<T: Float + Debug + Send + Sync + 'static> {
-    /// Benchmark name
-    pub name: String,
-
-    /// Custom test configuration
-    pub config: CustomBenchmarkConfig<T>,
-
-    /// Evaluation function
-    pub evaluator: CustomEvaluator<T>,
-
-    /// Validation criteria
-    pub validation: ValidationCriteria<T>,
-}
-
-/// Custom benchmark configuration
-#[derive(Debug, Clone)]
-pub struct CustomBenchmarkConfig<T: Float + Debug + Send + Sync + 'static> {
-    /// Problem definition
-    pub problem_definition: ProblemDefinition<T>,
-
-    /// Evaluation criteria
-    pub evaluation_criteria: Vec<EvaluationCriterion<T>>,
-
-    /// Success metrics
-    pub success_metrics: SuccessMetrics<T>,
-
-    /// Termination conditions
-    pub termination_conditions: TerminationConditions<T>,
-}
-
-/// Problem definition for custom benchmarks
-#[derive(Debug, Clone)]
-pub struct ProblemDefinition<T: Float + Debug + Send + Sync + 'static> {
-    /// Problem type
-    pub problem_type: ProblemType,
-
-    /// Input dimensionality
-    pub input_dim: usize,
-
-    /// Output dimensionality
-    pub output_dim: usize,
-
-    /// Dataset size
-    pub dataset_size: usize,
-
-    /// Problem-specific parameters
-    pub parameters: HashMap<String, T>,
-
-    /// Data characteristics
-    pub data_characteristics: DataCharacteristics<T>,
-}
-
-/// Custom evaluator function
-#[derive(Debug, Clone)]
-pub struct CustomEvaluator<T: Float + Debug + Send + Sync + 'static> {
-    /// Evaluator type
-    pub evaluator_type: EvaluatorType,
-
-    /// Evaluation function parameters
-    pub parameters: HashMap<String, T>,
-
-    /// Input/output specifications
-    pub io_spec: IOSpecification,
 }
 
 /// Benchmark metadata
@@ -194,14 +143,9 @@ pub struct BenchmarkSuite<T: Float + Debug + Send + Sync + 'static> {
     /// Standard benchmarks
     standard_benchmarks: Vec<StandardBenchmark<T>>,
 
-    /// Custom benchmarks
-    custom_benchmarks: Vec<CustomBenchmark<T>>,
-
-    /// Benchmark metadata
+    /// Suite identity: name, version, description, authorship and licence.
+    /// Readable through [`BenchmarkSuite::metadata`].
     metadata: BenchmarkMetadata,
-
-    /// Benchmark results cache
-    results_cache: HashMap<String, BenchmarkResults<T>>,
 
     /// Empirical distribution of normalized scores observed per benchmark name.
     ///
@@ -230,7 +174,6 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             standard_benchmarks: Vec::new(),
-            custom_benchmarks: Vec::new(),
             metadata: BenchmarkMetadata {
                 name: "Standard Benchmark Suite".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -242,7 +185,6 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
                 author: "COOLJAPAN OU (Team KitaSan)".to_string(),
                 license: "Apache-2.0".to_string(),
             },
-            results_cache: HashMap::new(),
             score_history: HashMap::new(),
             steps_per_benchmark: DEFAULT_STEPS_PER_BENCHMARK,
         })
@@ -251,7 +193,7 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
     pub(crate) fn initialize(&mut self, config: &EvaluationConfig) -> Result<()> {
         // Drive the inner optimization loop from the configured epoch budget so
         // callers can trade evaluation fidelity against search wall time.
-        self.steps_per_benchmark = (config.epochs as usize).max(1).min(MAX_STEPS_PER_BENCHMARK);
+        self.steps_per_benchmark = (config.epochs as usize).clamp(1, MAX_STEPS_PER_BENCHMARK);
 
         // Initialize standard benchmarks
         self.standard_benchmarks.clear();
@@ -262,6 +204,12 @@ impl<T: Float + Debug + Default + Send + Sync> BenchmarkSuite<T> {
     /// Number of optimizer steps executed per benchmark run.
     pub fn steps_per_benchmark(&self) -> usize {
         self.steps_per_benchmark
+    }
+
+    /// Identity of this benchmark suite: name, version, description, author and
+    /// licence.
+    pub fn metadata(&self) -> &BenchmarkMetadata {
+        &self.metadata
     }
 
     /// Registered standard benchmarks.
@@ -1017,8 +965,10 @@ mod tests {
 
     fn suite() -> BenchmarkSuite<f64> {
         let mut suite = BenchmarkSuite::<f64>::new().expect("suite");
-        let mut config = EvaluationConfig::default();
-        config.epochs = 40;
+        let config = EvaluationConfig {
+            epochs: 40,
+            ..EvaluationConfig::default()
+        };
         suite.initialize(&config).expect("initialize");
         suite
     }

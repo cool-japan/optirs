@@ -28,7 +28,7 @@
 //!
 //! # High-level workflow
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::automl_pipeline::{AutomlPipelineCoordinator, CandidateModel};
 //! use scirs2_core::ndarray::{Array1, Array2};
 //! use scirs2_core::random::Random;

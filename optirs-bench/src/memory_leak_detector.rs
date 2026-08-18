@@ -334,8 +334,6 @@ pub struct MemoryAnomaly {
 pub struct MemoryOptimizer {
     /// Optimization strategies
     strategies: Vec<Box<dyn OptimizationStrategy>>,
-    /// Performance metrics
-    performance_metrics: PerformanceMetrics,
 }
 
 /// Optimization strategy trait
@@ -914,18 +912,13 @@ impl Default for MemoryOptimizer {
 impl MemoryOptimizer {
     /// Create a new memory optimizer
     pub fn new() -> Self {
+        // Real metrics require a live `AllocationTracker`, which this optimizer
+        // does not hold; `MemoryLeakDetector::generate_optimization_report`
+        // computes them itself (via `compute_performance_metrics`, from its own
+        // `allocation_tracker`) directly into `MemoryOptimizationReport`, not
+        // through this type.
         let mut optimizer = Self {
             strategies: Vec::new(),
-            // Real metrics require a live `AllocationTracker`; at
-            // construction time there is no data yet, so this starts at an
-            // honest "unknown" baseline and is overwritten with real
-            // measurements by `MemoryLeakDetector::generate_optimization_report`.
-            performance_metrics: PerformanceMetrics {
-                memory_efficiency: 1.0,
-                allocation_efficiency: 1.0,
-                cache_hit_ratio: None,
-                gc_overhead: None,
-            },
         };
 
         // Initialize optimization strategies

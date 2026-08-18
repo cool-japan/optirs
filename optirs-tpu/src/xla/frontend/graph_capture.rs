@@ -852,10 +852,68 @@ impl<T: Float + Debug + Send + Sync + 'static> XLAComputation<T> {
             .map(|op| op.output)
     }
 
+    /// Rederive the declared-input list from the surviving `Parameter`
+    /// operations, in operation order.
+    ///
+    /// `inputs` is the contract between a caller's argument list and the
+    /// graph's parameter operands: `ExecutionEngine::execute_task` binds the
+    /// nth argument to `inputs[n].operand`, and shape inference seeds from the
+    /// same list. If an optimization pass ever removed or reordered a
+    /// `Parameter` operation without this, the list would keep describing a
+    /// graph that no longer exists and arguments would silently bind to the
+    /// wrong operands.
+    ///
+    /// No current pass does that -- `Parameter` counts as side-effecting, so
+    /// dead-code elimination roots it and common-subexpression elimination
+    /// never keys on it -- but that is a property of today's pass set, not of
+    /// the type. Deriving the list here makes it a property of the type, and
+    /// the arity check in `execute_task` then catches a genuine parameter
+    /// removal as an honest error rather than a misbinding.
+    ///
+    /// Shapes and dtypes are refreshed from the operands as well, so a pass
+    /// that legitimately rewrites a parameter's shape stays described.
+    fn rebuild_inputs(&mut self) {
+        let mut rebuilt = Vec::with_capacity(self.inputs.len());
+        for operation in &self.operations {
+            if !matches!(operation.op_type, OperationType::Parameter) {
+                continue;
+            }
+            let Some(operand) = self.operands.get(&operation.output) else {
+                continue;
+            };
+            let index = rebuilt.len();
+            // Preserve the caller-visible name where the parameter already had
+            // one, so a rebuild does not rename a graph's arguments.
+            let name = self
+                .inputs
+                .iter()
+                .find(|spec| spec.operand == operation.output)
+                .map(|spec| spec.name.clone())
+                .unwrap_or_else(|| format!("param_{index}"));
+            let layout_hint = self
+                .inputs
+                .iter()
+                .find(|spec| spec.operand == operation.output)
+                .and_then(|spec| spec.layout_hint.clone());
+
+            rebuilt.push(InputSpecification {
+                index,
+                name,
+                operand: operation.output,
+                shape: operand.shape.clone(),
+                dtype: operand.dtype,
+                layout_hint,
+                _phantom: std::marker::PhantomData,
+            });
+        }
+        self.inputs = rebuilt;
+    }
+
     /// Rewrite every use of operand `from` to instead read operand `to`.
     ///
-    /// Covers operation inputs and declared computation outputs. Callers are
-    /// expected to follow up with [`Self::rebuild_dependencies`].
+    /// Covers operation inputs, declared computation outputs, and declared
+    /// inputs. Callers are expected to follow up with
+    /// [`Self::rebuild_dependencies`].
     pub fn replace_operand_uses(&mut self, from: OperandId, to: OperandId) {
         if from == to {
             return;
@@ -874,15 +932,33 @@ impl<T: Float + Debug + Send + Sync + 'static> XLAComputation<T> {
                 output.operand = to;
             }
         }
+
+        // Declared inputs point at operands too. No pass should be merging one
+        // parameter into another (`Parameter` is treated as side-effecting, so
+        // CSE never keys on it), but if one ever does, silently leaving
+        // `inputs` pointing at a deleted operand would make argument binding
+        // fail at run time rather than here.
+        for input in &mut self.inputs {
+            if input.operand == from {
+                input.operand = to;
+            }
+        }
     }
 
-    /// Recompute producer/consumer metadata and the dependency map from the
-    /// current operation list.
+    /// Recompute producer/consumer metadata, the dependency map, and the
+    /// declared-input list from the current operation list.
     ///
     /// Passes that add or remove operations invalidate this derived state;
     /// recomputing wholesale is cheaper to reason about than patching it
     /// incrementally and cannot drift out of sync.
+    ///
+    /// Every optimization pass that mutates the operation list calls this, so
+    /// it is the one place that can keep `inputs` true: the declared-input list
+    /// is rederived here from the surviving `Parameter` operations, which is
+    /// what keeps a caller's argument list bound to the operands it named.
     pub fn rebuild_dependencies(&mut self) {
+        self.rebuild_inputs();
+
         for operand in self.operands.values_mut() {
             operand.metadata.producer = None;
             operand.metadata.consumers.clear();
@@ -1016,35 +1092,6 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             .operands
             .insert(output_operand_id, output_operand);
 
-        // A `Parameter` operation *is* an input declaration, so record it in
-        // `computation.inputs`. Nothing used to populate that list, which left
-        // `ShapeInference::initialize_input_shapes` iterating an empty vector
-        // (so caller-supplied shapes never seeded inference) and left an
-        // executor with no way to tell which operand a given argument binds to.
-        if matches!(op_type, OperationType::Parameter) {
-            let index = computation.inputs.len();
-            let (shape, dtype) = computation
-                .operands
-                .get(&output_operand_id)
-                .map(|operand| (operand.shape.clone(), operand.dtype))
-                .ok_or_else(|| {
-                    OptimError::from(format!(
-                        "parameter operand {output_operand_id:?} vanished while declaring input \
-                         {index} of computation '{}'",
-                        computation.metadata.name
-                    ))
-                })?;
-            computation.inputs.push(InputSpecification {
-                index,
-                name: format!("param_{index}"),
-                operand: output_operand_id,
-                shape,
-                dtype,
-                layout_hint: None,
-                _phantom: std::marker::PhantomData,
-            });
-        }
-
         // Record this operation as a consumer of each input operand.
         for &input_id in &inputs {
             if let Some(operand) = computation.operands.get_mut(&input_id) {
@@ -1081,8 +1128,17 @@ impl<T: Float + Debug + Default + std::fmt::Debug + Clone + Send + Sync>
             _phantom: std::marker::PhantomData,
         };
 
+        let is_parameter = matches!(operation.op_type, OperationType::Parameter);
         computation.operations.push(operation);
         computation.dependencies.insert(op_id, input_ops);
+
+        // A `Parameter` operation *is* an input declaration. Derived through
+        // the same single funnel the optimization passes use, so a graph's
+        // declared inputs are always exactly its surviving parameters rather
+        // than a list maintained in two places that can disagree.
+        if is_parameter {
+            computation.rebuild_inputs();
+        }
 
         Ok(op_id)
     }

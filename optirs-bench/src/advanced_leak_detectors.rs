@@ -686,7 +686,7 @@ impl CycleDetector {
             neighbors
         }
 
-        fn visit(state: &mut TarjanState, node: usize, graph: &HashMap<usize, HashSet<usize>>) {
+        fn visit(state: &mut TarjanState, node: usize) {
             state.indices.insert(node, state.index);
             state.lowlinks.insert(node, state.index);
             state.index += 1;
@@ -695,7 +695,7 @@ impl CycleDetector {
         }
 
         let mut frames: Vec<Frame> = Vec::new();
-        visit(state, start, graph);
+        visit(state, start);
         frames.push(Frame {
             node: start,
             neighbors: sorted_neighbors(graph, start),
@@ -710,7 +710,7 @@ impl CycleDetector {
                 frame.next += 1;
 
                 if !state.indices.contains_key(&w) {
-                    visit(state, w, graph);
+                    visit(state, w);
                     frames.push(Frame {
                         node: w,
                         neighbors: sorted_neighbors(graph, w),

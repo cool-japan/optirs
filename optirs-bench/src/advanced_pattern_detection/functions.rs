@@ -3,15 +3,20 @@
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
 use crate::regression_tester::distributions;
-use std::f64::consts::PI;
 
-use super::types::{
-    AdvancedMemoryPattern, AdvancedPatternConfig, AdvancedPatternType, FFTProcessor,
-    HypothesisTestEngine, StatisticalProperties, TrendInfo, WaveletProcessor,
-};
-use super::types_7::{
-    AdvancedPatternDetector, FrequencyCharacteristics, PatternClassifier, PatternEvolution,
-};
+use super::types::{AdvancedMemoryPattern, AdvancedPatternType, StatisticalProperties, TrendInfo};
+use super::types_7::{FrequencyCharacteristics, PatternEvolution};
+
+// Only exercised by the unit tests below (`FFTProcessor`/`WaveletProcessor`/
+// `HypothesisTestEngine`/`PatternClassifier`/`AdvancedPatternDetector` construction,
+// `PI` for the synthetic-signal test fixture) -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use super::types::{AdvancedPatternConfig, FFTProcessor, HypothesisTestEngine, WaveletProcessor};
+#[cfg(test)]
+use super::types_7::{AdvancedPatternDetector, PatternClassifier};
+#[cfg(test)]
+use std::f64::consts::PI;
 
 /// Current Unix timestamp in seconds, or `0` if the system clock is set before
 /// the Unix epoch. Non-panicking replacement for `.expect(...)` on
@@ -60,7 +65,10 @@ pub(super) fn dominant_spectral_peak(data: &[f64]) -> Option<(f64, f64)> {
     // Exclude the DC bin (index 0): it only reflects the mean level.
     let alternating = &spectrum[1..];
     let total: f64 = alternating.iter().map(|value| value.abs()).sum();
-    if !(total > 0.0) {
+    // `total` could in principle be NaN (propagated from non-finite input the
+    // caller did not already filter); treat that the same as "no energy" rather
+    // than silently comparing it as greater/less-than 0.0.
+    if total.is_nan() || total <= 0.0 {
         return None;
     }
     let (peak_offset, peak_magnitude) = alternating

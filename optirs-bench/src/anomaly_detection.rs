@@ -669,7 +669,6 @@ struct IsolationNode {
 #[derive(Debug, Clone)]
 struct IsolationTree {
     nodes: Vec<IsolationNode>,
-    max_depth: usize,
 }
 
 impl IsolationTree {
@@ -815,7 +814,7 @@ impl IsolationTree {
                 depth: 0,
             });
         }
-        Self { nodes, max_depth }
+        Self { nodes }
     }
 
     /// Compute the path length for `value`, augmented with the expected path

@@ -3,9 +3,7 @@
 // This module provides sophisticated defragmentation algorithms to reduce
 // memory fragmentation and improve allocation success rates and performance.
 
-#[allow(dead_code)]
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -196,6 +194,9 @@ pub trait CompactionStrategy: Send + Sync {
         layout: &mut MemoryLayoutTracker,
     ) -> Result<CompactionResult, DefragError>;
     fn get_statistics(&self) -> CompactionStats;
+    /// Clear this strategy's accumulated statistics, e.g. as part of
+    /// [`DefragmentationEngine::reset`].
+    fn reset(&mut self);
 }
 
 /// Result of a compaction operation
@@ -543,6 +544,10 @@ impl CompactionStrategy for SlidingCompactionStrategy {
     fn get_statistics(&self) -> CompactionStats {
         self.stats.clone()
     }
+
+    fn reset(&mut self) {
+        self.stats = CompactionStats::default();
+    }
 }
 
 /// Two-pointer compaction strategy
@@ -617,7 +622,6 @@ impl CompactionStrategy for TwoPointerCompactionStrategy {
         let mut sorted_blocks = movable_blocks;
         sorted_blocks.sort_by_key(|b| b.address);
 
-        let left_ptr = 0;
         let mut compact_addr = sorted_blocks[0].address;
 
         // Two-pointer compaction
@@ -672,6 +676,10 @@ impl CompactionStrategy for TwoPointerCompactionStrategy {
 
     fn get_statistics(&self) -> CompactionStats {
         self.stats.clone()
+    }
+
+    fn reset(&mut self) {
+        self.stats = CompactionStats::default();
     }
 }
 
@@ -845,7 +853,7 @@ impl DefragmentationEngine {
 
         // Reset strategy statistics
         for strategy in &mut self.strategies {
-            // Would need to add reset method to CompactionStrategy trait
+            strategy.reset();
         }
     }
 }
@@ -972,6 +980,95 @@ mod tests {
         let compaction_result = result.expect("unwrap failed");
         assert!(compaction_result.bytes_moved > 0);
         assert!(compaction_result.objects_relocated > 0);
+
+        // `execute` above must have accumulated real statistics ...
+        assert!(strategy.get_statistics().executions > 0);
+        // ... and `reset` must genuinely clear them, not just be a no-op
+        // documented as "would need to add reset method to the trait".
+        strategy.reset();
+        assert_eq!(strategy.get_statistics().executions, 0);
+        assert_eq!(strategy.get_statistics().total_bytes_moved, 0);
+    }
+
+    #[test]
+    fn test_two_pointer_compaction_strategy_reset_clears_statistics() {
+        let mut strategy = TwoPointerCompactionStrategy::new();
+        let mut layout = MemoryLayoutTracker::new();
+        layout.add_allocated_block(1000, 500, true);
+        layout.add_allocated_block(2000, 300, true);
+        layout.add_free_region(1500, 200);
+
+        strategy
+            .execute(&mut layout)
+            .expect("two-pointer compaction should succeed with movable blocks");
+        assert!(strategy.get_statistics().executions > 0);
+
+        strategy.reset();
+        assert_eq!(strategy.get_statistics().executions, 0);
+        assert_eq!(strategy.get_statistics().total_bytes_moved, 0);
+    }
+
+    #[test]
+    fn test_defragmentation_engine_reset_clears_strategy_statistics() {
+        let config = DefragConfig::default();
+        let mut engine = DefragmentationEngine::new(config);
+
+        let mut allocated_blocks = HashMap::new();
+        allocated_blocks.insert(
+            1000,
+            AllocatedBlock {
+                address: 1000,
+                size: 500,
+                allocation_time: Instant::now(),
+                last_access: None,
+                access_count: 0,
+                is_movable: true,
+                reference_count: 1,
+            },
+        );
+        allocated_blocks.insert(
+            2000,
+            AllocatedBlock {
+                address: 2000,
+                size: 300,
+                allocation_time: Instant::now(),
+                last_access: None,
+                access_count: 0,
+                is_movable: true,
+                reference_count: 1,
+            },
+        );
+        let mut free_regions = BTreeMap::new();
+        free_regions.insert(
+            1500,
+            FreeRegion {
+                address: 1500,
+                size: 300,
+                age: Duration::from_secs(10),
+                access_frequency: 0,
+                adjacent_to_allocated: true,
+            },
+        );
+        engine.update_layout(allocated_blocks, free_regions);
+        engine
+            .defragment()
+            .expect("defragmentation should find a suitable strategy for this layout");
+        assert!(
+            engine
+                .strategies
+                .iter()
+                .any(|s| s.get_statistics().executions > 0),
+            "defragment() should have driven at least one strategy's statistics"
+        );
+
+        engine.reset();
+        assert!(
+            engine
+                .strategies
+                .iter()
+                .all(|s| s.get_statistics().executions == 0),
+            "reset() must clear every strategy's accumulated statistics"
+        );
     }
 
     #[test]
@@ -1008,9 +1105,11 @@ mod tests {
 
         engine.update_layout(allocated_blocks, free_regions);
 
-        // Test defragmentation trigger
+        // Test defragmentation trigger: a single free region has nothing to
+        // be fragmented relative to (fragmentation = 1 - largest/total = 0),
+        // which is below the default 0.3 threshold either way.
         let should_defrag = engine.should_defragment();
-        // Result depends on fragmentation threshold and current state
+        assert!(!should_defrag);
 
         let stats = engine.get_stats();
         assert_eq!(stats.total_cycles, 0); // No cycles yet
@@ -1038,7 +1137,7 @@ mod tests {
         let engine = ThreadSafeDefragmentationEngine::new(config);
 
         let should_defrag = engine.should_defragment();
-        // Should not trigger defrag on empty layout
+        assert!(!should_defrag, "should not trigger defrag on empty layout");
 
         let stats = engine.get_stats();
         assert_eq!(stats.total_cycles, 0);

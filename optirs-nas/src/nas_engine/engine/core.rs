@@ -6,7 +6,6 @@ use crate::nas_engine::config::*;
 use crate::nas_engine::resources::*;
 use crate::nas_engine::results::*;
 use scirs2_core::numeric::Float;
-use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::time::{Duration, Instant};
@@ -130,7 +129,19 @@ impl<
     /// a tracker over your own [`crate::nas_engine::telemetry::TelemetrySource`] to
     /// make them enforceable:
     ///
-    /// ```ignore
+    /// ```
+    /// use optirs_nas::nas_engine::resources::SystemResourceTracker;
+    /// use optirs_nas::nas_engine::telemetry::{FixedTelemetry, TelemetrySample};
+    /// use optirs_nas::nas_engine::{create_minimal_nas_config, NeuralArchitectureSearch};
+    /// use std::time::Duration;
+    ///
+    /// # fn main() -> Result<(), optirs_nas::error::OptimError> {
+    /// let mut engine = NeuralArchitectureSearch::new(create_minimal_nas_config::<f64>())?;
+    ///
+    /// // Any `TelemetrySource` will do; `FixedTelemetry` stands in for a real one
+    /// // so this example does not depend on the host it runs on.
+    /// let my_source = FixedTelemetry::new("agent", TelemetrySample::unknown());
+    ///
     /// engine.resource_monitor_mut().set_trackers(vec![Box::new(
     ///     SystemResourceTracker::with_telemetry(
     ///         "agent".to_string(),
@@ -138,6 +149,10 @@ impl<
     ///         Box::new(my_source),
     ///     ),
     /// )]);
+    ///
+    /// assert_eq!(engine.resource_monitor().telemetry_source_names(), ["agent"]);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn resource_monitor_mut(&mut self) -> &mut ResourceMonitor<T> {
         &mut self.resource_monitor

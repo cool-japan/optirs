@@ -176,6 +176,28 @@ fn test_adam_step_list() {
     assert_eq!(result.len(), 6);
 }
 
+/// `dim == 0` combined with empty `params`/`gradients` used to slip past the
+/// `is_multiple_of` divisibility check (which special-cases 0 as "divisible"
+/// for an empty slice) and panic inside `<[f64]>::chunks(0)`. It must be
+/// rejected as an honest `Err` instead, for every optimizer wrapper that
+/// exposes `step_list`.
+#[test]
+fn test_step_list_rejects_zero_dim_without_panicking() {
+    assert!(WasmAdam::new(0.001).step_list(&[], &[], 0).is_err());
+    assert!(WasmSGD::new(0.01).step_list(&[], &[], 0).is_err());
+    assert!(WasmSparseAdam::new(0.001).step_list(&[], &[], 0).is_err());
+    assert!(WasmAdaDelta::new(0.95, 1e-6)
+        .expect("AdaDelta creation should succeed")
+        .step_list(&[], &[], 0)
+        .is_err());
+    // Also confirm a non-empty array with dim=0 is rejected, not just the
+    // empty-array edge case (this path was already an `Err` before the fix,
+    // but is worth pinning down alongside the edge case above).
+    assert!(WasmAdam::new(0.001)
+        .step_list(&[1.0, 2.0], &[0.1, 0.2], 0)
+        .is_err());
+}
+
 // ===== Scheduler Tests =====
 
 #[test]

@@ -265,6 +265,129 @@ async fn executing_an_unregistered_computation_is_an_error() {
     assert!(backend.compile(ComputationId(1234)).is_err());
 }
 
+/// End-to-end guard on the argument-binding contract: a graph carrying dead
+/// operations and a duplicated subexpression goes through the full compile
+/// pipeline (DCE and CSE both rewrite the operation list) and must still
+/// evaluate correctly afterwards.
+///
+/// This is what pins `computation.inputs` to the surviving parameters. The two
+/// parameters deliberately share a shape, so any rebinding that matched
+/// operands by shape -- or any pass that dropped a parameter without the input
+/// list following -- would silently swap the arguments and produce `9` instead
+/// of `7`.
+#[tokio::test]
+async fn arguments_still_bind_correctly_after_the_optimization_pipeline() {
+    let config = TPUBackendConfig::default();
+    let mut backend = TPUBackend::<f32>::new(config).expect("backend");
+
+    let mut builder = ComputationGraphBuilder::<f32>::new();
+    let mut computation = builder.create_computation("optimized");
+
+    // Two same-shaped parameters: `a` and `b`.
+    let a = builder
+        .add_operation(
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[1]),
+        )
+        .and_then(|op| operand_of(&computation, op))
+        .expect("parameter a");
+    let b = builder
+        .add_operation(
+            &mut computation,
+            OperationType::Parameter,
+            vec![],
+            shape(&[1]),
+        )
+        .and_then(|op| operand_of(&computation, op))
+        .expect("parameter b");
+
+    // Dead subtree: nothing consumes this, so DCE must remove it.
+    builder
+        .add_operation(
+            &mut computation,
+            OperationType::Multiply,
+            vec![b, b],
+            shape(&[1]),
+        )
+        .expect("dead operation");
+
+    // `a - b`, computed twice so CSE has a duplicate to merge.
+    let difference = builder
+        .add_operation(
+            &mut computation,
+            OperationType::Subtract,
+            vec![a, b],
+            shape(&[1]),
+        )
+        .and_then(|op| operand_of(&computation, op))
+        .expect("difference");
+    builder
+        .add_operation(
+            &mut computation,
+            OperationType::Subtract,
+            vec![a, b],
+            shape(&[1]),
+        )
+        .expect("duplicate difference");
+
+    builder
+        .set_outputs(&mut computation, &[difference])
+        .expect("declare the difference as the output");
+
+    assert_eq!(
+        computation.inputs.len(),
+        2,
+        "both parameters must be declared inputs before optimization"
+    );
+    let operations_before = computation.operations.len();
+    assert_eq!(operations_before, 5);
+
+    // Prove this test is not vacuous: the pipeline really does rewrite this
+    // graph, so the assertions below are exercising post-optimization binding
+    // rather than an untouched graph.
+    let mut pipeline = crate::xla::optimization::OptimizationPipeline::<f32>::new(
+        &crate::xla::XLACompilerConfig::default(),
+    );
+    let optimized = pipeline
+        .optimize(computation.clone())
+        .expect("the pipeline must accept this graph");
+    assert!(
+        optimized.operations.len() < operations_before,
+        "expected DCE/CSE to remove operations, {} -> {}",
+        operations_before,
+        optimized.operations.len()
+    );
+    assert_eq!(
+        optimized.inputs.len(),
+        2,
+        "both parameters must survive optimization and stay declared"
+    );
+
+    let id = backend.register_computation(computation);
+
+    // `a - b` is deliberately non-commutative: 10 - 3 = 7, while a swapped
+    // binding would give 3 - 10 = -7.
+    let outputs = backend
+        .execute_computation(
+            id,
+            vec![
+                TPUBuffer::new(vec![10.0f32], vec![1], MemoryLayout::RowMajor),
+                TPUBuffer::new(vec![3.0f32], vec![1], MemoryLayout::RowMajor),
+            ],
+        )
+        .await
+        .expect("execution succeeds");
+
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(
+        outputs[0].data,
+        vec![7.0f32],
+        "arguments must bind to the parameters they were declared for"
+    );
+}
+
 /// Supplying the wrong number of arguments is reported, not silently padded.
 #[tokio::test]
 async fn argument_count_must_match_the_declared_parameters() {
@@ -836,6 +959,18 @@ async fn execution_records_real_memory_events_into_the_profile() {
     assert!(
         stats.peak_memory_usage > 0,
         "the peak must reflect the bytes actually reserved"
+    );
+
+    // A snapshot must be taken while the reservations are still live. A
+    // snapshot of the post-release state records nothing but zeros, which would
+    // make the exported memory profile structurally empty however much real
+    // allocation happened.
+    assert!(
+        profiler
+            .usage_snapshots()
+            .iter()
+            .any(|snapshot| snapshot.total_usage > 0 && !snapshot.regions.is_empty()),
+        "expected a snapshot taken at peak occupancy, saw only empty ones"
     );
 }
 

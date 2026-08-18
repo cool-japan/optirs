@@ -2,20 +2,16 @@
 
 use crate::error::{OptimError, Result};
 use crate::nas_engine::{
-    MultiObjectiveConfig, ObjectiveType, OptimizationDirection, OptimizerArchitecture, SearchResult,
+    MultiObjectiveConfig, OptimizationDirection, OptimizerArchitecture, SearchResult,
 };
-use crate::EvaluationMetric;
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::random::Rng;
-use scirs2_core::RngExt;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::core::{
-    CreationMethod, FrontMetrics, Individual, MultiObjectiveOptimizer, MultiObjectiveStatistics,
-    ObjectiveBounds, ParetoFront, ParetoSolution, SolutionMetadata,
+    CreationMethod, Individual, MultiObjectiveOptimizer, MultiObjectiveStatistics, ObjectiveBounds,
+    ParetoFront, ParetoSolution, SolutionMetadata,
 };
 use super::hypervolume::{
     derive_reference_point, hypervolume_minimization, normalize_front_for_minimization,
@@ -787,6 +783,24 @@ impl<
                 }
             }
         }
+        // NSGA-II's survivor selection, which was implemented but never called.
+        // Without it the population grew by one individual for every
+        // never-before-seen architecture, for the whole run: it stopped being a
+        // population of `population_size` at all, and both the memory it occupies
+        // and the O(n^2) non-dominated sort below scaled with the number of
+        // evaluations instead. `environmental_selection` truncates the combined
+        // parent+offspring pool back to `population_size` by rank, breaking ties on
+        // crowding distance — the (mu + lambda) step of the published algorithm.
+        //
+        // Only reachable once every slot holds an evaluated individual: the absorb
+        // loop above fills unevaluated vacancies first and only appends when there
+        // are none, so truncation never discards a candidate that has not been
+        // measured.
+        if self.population.len() > self.population_size {
+            let combined = std::mem::take(&mut self.population);
+            self.population = self.environmental_selection(combined);
+        }
+
         self.generation += 1;
         self.statistics.total_evaluations += results.len();
         let fronts = self.non_dominated_sort();

@@ -5,17 +5,29 @@
 use crate::error::{OptimError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use super::comprehensivesecurityauditor_type::ComprehensiveSecurityAuditor;
 use super::constants::EMBEDDED_ADVISORY_SNAPSHOT_DATE;
 use super::types::{
-    ConfigSecurityResult, DeclaredDependency, DependencyScanResult, DependencyTree,
-    EmbeddedAdvisory, LicenseComplianceResult, OutdatedDependency, PolicyComplianceResult,
-    ResolvedDependency, RiskAssessment, SecretDetectionResult, SecurityAuditConfig,
-    SecurityAuditResult, SecuritySeverity, StaticAnalysisResult, SupplyChainAnalysisResult,
+    DeclaredDependency, DependencyScanConfig, DependencyScanResult, DependencyTree,
+    EmbeddedAdvisory, OutdatedDependency, ResolvedDependency, SecuritySeverity, SupplyChainRisk,
     Vulnerability, VulnerabilityCategory, VulnerableDependency,
 };
+
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use super::comprehensivesecurityauditor_type::ComprehensiveSecurityAuditor;
+#[cfg(test)]
+use super::types::{
+    ConfigSecurityResult, LicenseComplianceResult, PolicyComplianceResult, RiskAssessment,
+    SecretDetectionResult, SecurityAuditConfig, SecurityAuditResult, StaticAnalysisResult,
+    SupplyChainAnalysisResult,
+};
+#[cfg(test)]
+use std::collections::HashSet;
+#[cfg(test)]
+use std::time::Duration;
 
 /// Shannon entropy in bits/char of `s`, from character frequency. Standard
 /// `-sum(p_i * log2(p_i))` formula; used by `detect_secrets` to flag
@@ -442,12 +454,17 @@ pub(super) fn read_crate_license(name: &str, version: &str) -> Option<String> {
 
 /// Real, fully offline dependency scan: resolves dependencies from
 /// `Cargo.lock` (preferred) or `Cargo.toml` (fallback), matches each against
-/// [`embedded_advisory_snapshot`], and reports outdated status as `Unknown`
-/// (this crate has no registry client). Shared by both
-/// `ComprehensiveSecurityAuditor::scan_dependencies_with_rustsec` and
+/// [`embedded_advisory_snapshot`], and flags any dependency named in
+/// `config.blocked_dependencies` as a supply-chain risk. Outdated status is
+/// never reported (this crate has no registry client to check against, so
+/// there is no honest way to tell "not outdated" from "unknown"). Shared by
+/// both `ComprehensiveSecurityAuditor::scan_dependencies_with_rustsec` and
 /// `DependencyScanner::scan_dependencies` so there is exactly one
 /// implementation of this logic.
-pub(super) fn scan_dependencies_offline(projectpath: &Path) -> Result<DependencyScanResult> {
+pub(super) fn scan_dependencies_offline(
+    projectpath: &Path,
+    config: &DependencyScanConfig,
+) -> Result<DependencyScanResult> {
     let lock_path = projectpath.join("Cargo.lock");
     let toml_path = projectpath.join("Cargo.toml");
 
@@ -541,14 +558,43 @@ pub(super) fn scan_dependencies_offline(projectpath: &Path) -> Result<Dependency
     // content. `outdated_dependencies` is therefore always empty here; that
     // is honestly different from "checked, found nothing outdated".
 
-    let risk_score = (vulnerable_dependencies.len() as f64 * 0.3).min(1.0);
+    // `config.blocked_dependencies` is a policy denylist (e.g. a package the
+    // team has decided never to depend on for licensing or provenance
+    // reasons); a resolved dependency matching it is a real, checkable
+    // supply-chain risk regardless of whether it also has a CVE.
+    //
+    // `allowed_licenses`/`blocked_licenses`, `max_depth` and
+    // `scan_direct_deps`/`scan_transitive_deps` are NOT checked here:
+    // `ResolvedDependency` carries only `name`/`version` (no license data --
+    // getting it would mean querying a registry this offline scanner
+    // deliberately does not have), and `Cargo.lock`/`Cargo.toml` parsing does
+    // not currently distinguish direct from transitive depth. Honoring those
+    // fields is a real feature addition, not a mechanical wiring, so it is
+    // left as a tracked gap rather than silently ignored without comment.
+    let supply_chain_risks: Vec<SupplyChainRisk> = resolved
+        .iter()
+        .filter(|dep| config.blocked_dependencies.contains(&dep.name))
+        .map(|dep| SupplyChainRisk {
+            package: dep.name.clone(),
+            risk_type: "blocked_dependency".to_string(),
+            severity: SecuritySeverity::High,
+            description: format!(
+                "{} {} is on the configured blocked-dependency list",
+                dep.name, dep.version
+            ),
+        })
+        .collect();
+
+    let risk_score = (vulnerable_dependencies.len() as f64 * 0.3
+        + supply_chain_risks.len() as f64 * 0.2)
+        .min(1.0);
 
     Ok(DependencyScanResult {
         total_dependencies,
         vulnerable_dependencies,
         outdated_dependencies,
         license_violations: Vec::new(),
-        supply_chain_risks: Vec::new(),
+        supply_chain_risks,
         dependency_tree: DependencyTree::default(),
         risk_score,
     })
@@ -564,6 +610,73 @@ pub(super) mod tests {
         let auditor = ComprehensiveSecurityAuditor::new(config);
         assert!(auditor.config.enable_dependency_scanning);
         assert!(auditor.config.enable_static_analysis);
+    }
+
+    /// `DependencyScanConfig::blocked_dependencies` must surface a matching
+    /// resolved dependency as a `supply_chain_risks` entry, and must leave an
+    /// unlisted dependency alone.
+    #[test]
+    fn scan_dependencies_offline_flags_blocked_dependency() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_dep_scanner_blocked_test_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp project dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+             left-pad = \"1.0\"\nserde = \"1.0\"\n",
+        )
+        .expect("write Cargo.toml");
+
+        let config = DependencyScanConfig {
+            blocked_dependencies: HashSet::from(["left-pad".to_string()]),
+            ..DependencyScanConfig::default()
+        };
+        let result = scan_dependencies_offline(&dir, &config);
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        let result = result.expect("scan succeeds on a well-formed temp project");
+        assert_eq!(result.total_dependencies, 2);
+        assert_eq!(result.supply_chain_risks.len(), 1);
+        assert_eq!(result.supply_chain_risks[0].package, "left-pad");
+        assert_eq!(result.supply_chain_risks[0].risk_type, "blocked_dependency");
+        assert!(result
+            .supply_chain_risks
+            .iter()
+            .all(|risk| risk.package != "serde"));
+        assert!(result.risk_score > 0.0);
+    }
+
+    /// An empty `blocked_dependencies` (the default) must leave
+    /// `supply_chain_risks` empty, matching the pre-wiring behavior.
+    #[test]
+    fn scan_dependencies_offline_reports_no_risk_with_no_blocklist() {
+        let dir = std::env::temp_dir().join(format!(
+            "optirs_bench_dep_scanner_unblocked_test_{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp project dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
+             serde = \"1.0\"\n",
+        )
+        .expect("write Cargo.toml");
+
+        let result = scan_dependencies_offline(&dir, &DependencyScanConfig::default());
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        let result = result.expect("scan succeeds on a well-formed temp project");
+        assert!(result.supply_chain_risks.is_empty());
     }
 
     #[test]

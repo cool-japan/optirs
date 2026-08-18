@@ -148,6 +148,17 @@ impl GpuBackendFactory {
 /// A missing or unreadable root (non-Linux, sandboxed, containerized without
 /// `/sys` mounted, ...) returns an empty list — the honest "detection is not
 /// possible here" answer, not a guess.
+///
+/// Only the Linux arm of [`GpuBackendFactory::detect_available_vendors`]
+/// calls this in production, so non-Linux builds see it as unused from the
+/// compiler's point of view. It is not dead: `detect_pci_display_vendors_*`
+/// below deliberately exercise this pure parsing logic against a fake sysfs
+/// tree on every platform the test suite runs on (see their doc comments),
+/// not just Linux, so the tests stay platform-independent rather than being
+/// narrowed to `cfg(target_os = "linux")`. The allow below silences that
+/// cross-platform false positive instead of deleting real, tested detection
+/// logic or reducing test coverage.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn detect_pci_display_vendors(pci_root: &std::path::Path) -> Vec<GpuVendor> {
     const DISPLAY_CLASS_PREFIX: &str = "0x03";
     const NVIDIA_VENDOR_ID: &str = "0x10de";

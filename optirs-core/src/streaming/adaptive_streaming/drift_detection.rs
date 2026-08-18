@@ -5,6 +5,9 @@
 // and ensemble methods for identifying concept drift in streaming data.
 
 use super::config::*;
+use super::drift_models::{
+    DecisionTreeDriftDetector, EnsembleDriftDetector, NeuralNetworkDriftDetector,
+};
 use super::drift_tests::{
     AdwinTest, CusumTest, DdmTest, EddmTest, HistogramComparator, HistogramDivergence, KsTest,
     LinearModelDetector, MannWhitneyUTest, PageHinkleyTest, WassersteinComparator,
@@ -273,10 +276,25 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
             Box::new(WassersteinComparator::new(sensitivity)?),
         );
 
-        // Initialize model detectors.
+        // Initialize model detectors. Every `ModelType` variant is backed by a
+        // real model of the family it names (see `drift_models`): a linear
+        // regressor, a one-hidden-layer online MLP, a depth-limited CART fit
+        // over a sliding window, and a majority-voting ensemble of the three.
         model_detectors.insert(
             ModelType::Linear,
             Box::new(LinearModelDetector::new(sensitivity)?),
+        );
+        model_detectors.insert(
+            ModelType::NeuralNetwork,
+            Box::new(NeuralNetworkDriftDetector::new(sensitivity)?),
+        );
+        model_detectors.insert(
+            ModelType::DecisionTree,
+            Box::new(DecisionTreeDriftDetector::new(sensitivity)?),
+        );
+        model_detectors.insert(
+            ModelType::Ensemble,
+            Box::new(EnsembleDriftDetector::new(sensitivity)?),
         );
 
         let false_positive_tracker = FalsePositiveTracker::new();
@@ -649,6 +667,17 @@ impl<A: Float + Default + Clone + Send + Sync + std::iter::Sum + 'static> Enhanc
         Ok(())
     }
 
+    /// Removes a model-based detector, so the "no detector registered" arm of
+    /// [`Self::detect_model_drift`] can be exercised now that every
+    /// `ModelType` variant ships with a real implementation.
+    #[cfg(test)]
+    pub(crate) fn unregister_model_detector_for_test(
+        &mut self,
+        model_type: &ModelType,
+    ) -> Option<Box<dyn ModelBasedDetector<A>>> {
+        self.model_detectors.remove(model_type)
+    }
+
     /// Classifies drift severity based on test results
     /// Test-only view of [`Self::classify_drift_severity`].
     #[cfg(test)]
@@ -937,24 +966,84 @@ mod drift_detector_regression_tests {
         }
     }
 
-    /// D1: an unregistered method must be an honest error rather than quietly
-    /// computing a *different* statistic and reporting it under the requested
-    /// method's name. The three unregistered `ModelType`s are the reachable case.
+    /// D1/F1: every `ModelType` variant is now backed by a real model of the
+    /// family it names (`drift_models`), so constructing a detector for any of
+    /// them and running it end-to-end succeeds. This test used to assert the
+    /// opposite — that `NeuralNetwork`, `DecisionTree` and `Ensemble` returned
+    /// an honest "not registered" error — which was the correct behaviour while
+    /// those three were name-only variants.
+    ///
+    /// The error arm itself is still live and still correct: it fires for a
+    /// `ModelType` that is genuinely absent from the map, which
+    /// `model_type_without_a_registered_detector_is_an_honest_error` covers.
     #[test]
-    fn unregistered_model_types_are_an_honest_error() {
+    fn every_model_type_is_registered() {
+        for model_type in [
+            ModelType::Linear,
+            ModelType::NeuralNetwork,
+            ModelType::DecisionTree,
+            ModelType::Ensemble,
+        ] {
+            let mut detector = detector_with(DriftDetectionMethod::ModelBased(model_type.clone()));
+            detector
+                .detect_drift(&batch(10.0, 120, 0))
+                .unwrap_or_else(|error| panic!("{model_type:?} warmup failed: {error}"));
+            let result = detector.detect_drift(&batch(40.0, 120, 500));
+            assert!(
+                result.is_ok(),
+                "{model_type:?} failed on a genuine mean shift: {result:?}"
+            );
+        }
+    }
+
+    /// D1: a `ModelType` with no registered detector must be an honest error
+    /// rather than quietly computing a *different* quantity and reporting it
+    /// under the requested model's name.
+    #[test]
+    fn model_type_without_a_registered_detector_is_an_honest_error() {
+        let mut detector = detector_with(DriftDetectionMethod::ModelBased(ModelType::Linear));
+        detector
+            .unregister_model_detector_for_test(&ModelType::Linear)
+            .expect("Linear starts out registered");
+        detector.detect_drift(&batch(10.0, 120, 0)).ok();
+        let result = detector.detect_drift(&batch(40.0, 120, 500));
+        assert!(
+            result.is_err(),
+            "an unregistered model type must report an error instead of a \
+             feature-mean proxy dressed up as a model-drift verdict"
+        );
+    }
+
+    /// F1: the three newly implemented model families reach a drift verdict
+    /// through the public `EnhancedDriftDetector` path on an unmistakable shift
+    /// in the target relationship.
+    #[test]
+    fn implemented_model_types_fire_on_a_target_shift() {
         for model_type in [
             ModelType::NeuralNetwork,
             ModelType::DecisionTree,
             ModelType::Ensemble,
         ] {
             let mut detector = detector_with(DriftDetectionMethod::ModelBased(model_type.clone()));
-            detector.detect_drift(&batch(10.0, 120, 0)).ok();
-            let result = detector.detect_drift(&batch(40.0, 120, 500));
+            for round in 0..6 {
+                detector
+                    .detect_drift(&batch(10.0, 60, round * 60))
+                    .unwrap_or_else(|error| panic!("{model_type:?} warmup failed: {error}"));
+            }
+            let mut fired = false;
+            for round in 0..6 {
+                if detector
+                    .detect_drift(&batch(400.0, 60, 5_000 + round * 60))
+                    .unwrap_or_else(|error| panic!("{model_type:?} shift failed: {error}"))
+                {
+                    fired = true;
+                    break;
+                }
+            }
             assert!(
-                result.is_err(),
-                "{model_type:?} has no registered detector, so it must report an \
-                 error instead of a feature-mean proxy dressed up as a \
-                 model-drift verdict"
+                fired,
+                "{model_type:?} did not report drift after a 390-unit shift in the \
+                 target relationship"
             );
         }
     }

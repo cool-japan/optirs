@@ -22,8 +22,11 @@ use std::time::{Duration, SystemTime};
 use super::config::{
     EmailIntegration, GitHubIntegration, HttpMethod, IntegrationConfig, PayloadFormat,
     SlackIntegration, WebhookAuth, WebhookIntegration, WebhookPayloadConfig, WebhookRetryConfig,
-    WebhookTriggerConfig,
 };
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use super::config::WebhookTriggerConfig;
 use super::reporting::GeneratedReport;
 use super::test_execution::{CiCdTestResult, TestExecutionStatus, TestSuiteStatistics};
 
@@ -1360,7 +1363,7 @@ fn apply_webhook_auth(headers: &mut HashMap<String, String>, auth: Option<&Webho
 /// HTTP Basic auth headers can be built without a base64 crate dependency.
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0];
         let b1 = *chunk.get(1).unwrap_or(&0);

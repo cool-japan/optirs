@@ -16,7 +16,7 @@ use super::types::*;
 /// Best-effort GPU detection, cached for the process lifetime.
 ///
 /// Returns `true` only if a GPU is actually detected; never hardcodes availability.
-fn gpu_available() -> bool {
+pub(super) fn gpu_available() -> bool {
     static GPU_CACHE: OnceLock<bool> = OnceLock::new();
     *GPU_CACHE.get_or_init(probe_gpu)
 }
@@ -57,7 +57,7 @@ fn probe_gpu() -> bool {
 ///
 /// Returns `true` only if a short TCP connect to a well-known host succeeds; a
 /// failure or timeout yields `false`. Never hardcodes availability.
-fn network_available() -> bool {
+pub(super) fn network_available() -> bool {
     static NET_CACHE: OnceLock<bool> = OnceLock::new();
     *NET_CACHE.get_or_init(probe_network)
 }

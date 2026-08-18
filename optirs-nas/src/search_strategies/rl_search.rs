@@ -2,15 +2,15 @@
 //
 // An LSTM controller autoregressively emits an architecture: the first decoding
 // step chooses a component type, each following step chooses a discretized bin
-// for one of that component's hyperparameters. The log-probability of every
-// sampled action is recorded, and the controller is trained with REINFORCE
+// for one of that component's hyperparameters. The full softmax over each step's
+// active logits is recorded, and the controller is trained with REINFORCE
 // (score-function policy gradient) using a learned baseline for variance
 // reduction, an entropy bonus for exploration, and global-norm gradient
 // clipping.
 
 use scirs2_core::ndarray::{Array1, Array2};
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng as SCRRng};
+use scirs2_core::random::Random;
 use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -74,7 +74,7 @@ fn softmax<T: Float>(logits: &Array1<T>, active: usize) -> Vec<T> {
         exps.push(e);
         sum = sum + e;
     }
-    if !(sum > T::zero()) {
+    if sum <= T::zero() || sum.is_nan() {
         let uniform = T::one() / scalar::<T>(active as f64);
         return vec![uniform; active];
     }
@@ -159,9 +159,12 @@ struct StepRecord<T: Float + Debug + Send + Sync + 'static> {
     /// Softmax probabilities over the active logit prefix.
     probs: Vec<T>,
     /// Index sampled at this step.
+    ///
+    /// The sampling log-probability is deliberately *not* stored alongside it:
+    /// the REINFORCE update recomputes `ln p(a_t)` from `probs[action]` where it
+    /// needs it, so a cached copy would be a second source of truth that could
+    /// drift from `probs` without anything noticing.
     action: usize,
-    /// `ln p(action)` at sampling time.
-    log_prob: T,
 }
 
 /// Forward-pass cache for one LSTM layer at one timestep.
@@ -176,6 +179,11 @@ struct LayerCache<T: Float + Debug + Send + Sync + 'static> {
     gate_o: Array1<T>,
     tanh_c: Array1<T>,
 }
+
+/// Everything one cached forward pass through the controller stack produces:
+/// the output logits, the per-layer caches backpropagation needs, and the
+/// top-layer hidden state.
+type ForwardPass<T> = (Array1<T>, Vec<LayerCache<T>>, Array1<T>);
 
 /// A full sampled architecture together with its decoding trace.
 #[derive(Debug, Clone)]
@@ -546,9 +554,6 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + 'stati
         let probs = softmax(&logits, arity);
         let action = sample_categorical(&probs, &mut self.rng);
 
-        let floor = scalar::<T>(1e-12);
-        let log_prob = probs.get(action).copied().unwrap_or(floor).max(floor).ln();
-
         Ok((
             action,
             StepRecord {
@@ -556,7 +561,6 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::fmt::Debug + 'stati
                 hidden_top,
                 probs,
                 action,
-                log_prob,
             },
         ))
     }
@@ -955,10 +959,7 @@ impl<T: Float + Debug + Default + Clone + 'static + Send + Sync> ControllerNetwo
 
     /// Run one timestep, also returning the per-layer caches needed for
     /// backpropagation.
-    fn forward_cached(
-        &mut self,
-        input: &Array1<T>,
-    ) -> Result<(Array1<T>, Vec<LayerCache<T>>, Array1<T>)> {
+    fn forward_cached(&mut self, input: &Array1<T>) -> Result<ForwardPass<T>> {
         // Accept any input length by projecting onto the declared width: too
         // short is zero-padded, too long is truncated. This keeps `forward`
         // total instead of panicking on a dimension mismatch.
@@ -1071,7 +1072,7 @@ fn bin_count(range: &ParameterRange) -> usize {
         ParameterRange::Categorical(values) => values.len().max(1),
         ParameterRange::Integer(min, max) => {
             let span = (max - min).max(0) as usize;
-            span.max(1).min(HYPERPARAMETER_BINS)
+            span.clamp(1, HYPERPARAMETER_BINS)
         }
         ParameterRange::Continuous(_, _) | ParameterRange::LogUniform(_, _) => HYPERPARAMETER_BINS,
     }
@@ -1413,11 +1414,12 @@ mod tests {
     }
 
     fn search_space(kinds: &[ConfigComponentType]) -> SearchSpaceConfig {
-        let mut space = SearchSpaceConfig::default();
-        space.components = kinds.iter().map(|k| component(k.clone(), true)).collect();
-        space.min_components = 1;
-        space.max_components = 1;
-        space
+        SearchSpaceConfig {
+            components: kinds.iter().map(|k| component(k.clone(), true)).collect(),
+            min_components: 1,
+            max_components: 1,
+            ..SearchSpaceConfig::default()
+        }
     }
 
     fn result_with_reward(reward: f64) -> SearchResult<f64> {

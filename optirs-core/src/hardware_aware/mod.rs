@@ -3,12 +3,25 @@
 // This module provides optimization strategies that adapt to different hardware configurations,
 // including CPUs, GPUs, TPUs, edge devices, and distributed systems.
 
-use crate::error::Result;
+use crate::error::{OptimError, Result};
 use crate::utils::{scalar_or, try_scalar};
 use scirs2_core::ndarray::{Array, Dimension, ScalarOperand};
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
+
+mod adaptive_tuner;
+mod optimization_state;
+
+pub use adaptive_tuner::{
+    tuned_value_as_f64, AdaptiveTuner, TunableParameter, TuningObservation, TuningOutcome,
+    TuningRecord, TuningStrategy,
+};
+pub use optimization_state::{
+    HardwareOptimizerKind, HardwareStepReport, OptimizationState, DEFAULT_BASE_LEARNING_RATE,
+};
+
+use optimization_state::accumulation_steps_for;
 
 /// Hardware platform types
 #[derive(Debug, Clone, PartialEq)]
@@ -316,7 +329,7 @@ pub enum AllReduceAlgorithm {
 
 /// Hardware-aware optimizer that adapts to different platforms
 #[derive(Debug)]
-pub struct HardwareAwareOptimizer<A: Float, D: Dimension> {
+pub struct HardwareAwareOptimizer<A: Float + 'static, D: Dimension + 'static> {
     /// Target hardware platform
     platform: HardwarePlatform,
     /// Hardware-specific configuration
@@ -359,60 +372,6 @@ pub struct ResourceMonitor<A: Float> {
     temperature: A,
 }
 
-/// Adaptive tuner for dynamic optimization
-#[derive(Debug)]
-pub struct AdaptiveTuner<A: Float> {
-    /// Performance target
-    performance_target: A,
-}
-
-/// Tuning record for adaptive optimization
-#[derive(Debug, Clone)]
-pub struct TuningRecord<A: Float> {
-    /// Tuning parameters used
-    pub parameters: HashMap<String, A>,
-    /// Performance achieved
-    pub performance: A,
-    /// Resource consumption
-    pub resource_usage: A,
-    /// Timestamp
-    pub timestamp: u64,
-}
-
-/// Tuning strategies
-#[derive(Debug, Clone)]
-pub enum TuningStrategy {
-    /// Grid search over parameter space
-    GridSearch {
-        /// Grid search resolution
-        resolution: usize,
-    },
-    /// Bayesian optimization
-    BayesianOptimization {
-        /// Number of samples
-        num_samples: usize,
-    },
-    /// Genetic algorithm
-    GeneticAlgorithm {
-        /// Population size
-        population_size: usize,
-        /// Number of generations
-        generations: usize,
-    },
-    /// Reinforcement learning based
-    ReinforcementLearning {
-        /// Exploration rate
-        exploration_rate: f64,
-    },
-}
-
-/// Current optimization state
-#[derive(Debug)]
-pub struct OptimizationState<A: Float, D: Dimension> {
-    /// Current parameters
-    parameters: Array<A, D>,
-}
-
 impl<
         A: Float
             + ScalarOperand
@@ -420,20 +379,45 @@ impl<
             + std::iter::Sum
             + for<'a> std::iter::Sum<&'a A>
             + Send
-            + Sync,
-        D: Dimension,
+            + Sync
+            + 'static,
+        D: Dimension + 'static,
     > HardwareAwareOptimizer<A, D>
 {
-    /// Create a new hardware-aware optimizer
+    /// Create a new hardware-aware optimizer at the default learning rate
+    /// ([`DEFAULT_BASE_LEARNING_RATE`]).
     pub fn new(platform: HardwarePlatform, initialparameters: Array<A, D>) -> Self {
+        Self::new_with_learning_rate(
+            platform,
+            initialparameters,
+            scalar_or(DEFAULT_BASE_LEARNING_RATE, A::zero()),
+        )
+    }
+
+    /// Create a new hardware-aware optimizer with an explicit base learning rate.
+    ///
+    /// The optimizer family is chosen by [`HardwareOptimizerKind::recommend_for`]
+    /// from the platform's default configuration, and the gradient accumulation
+    /// window from that configuration's [`MemoryStrategy`], so the returned
+    /// optimizer can take a real step immediately — before
+    /// [`Self::optimize_for_hardware`] has refined anything.
+    pub fn new_with_learning_rate(
+        platform: HardwarePlatform,
+        initialparameters: Array<A, D>,
+        base_learning_rate: A,
+    ) -> Self {
         let config = Self::default_config_for_platform(&platform);
         let profiler = PerformanceProfiler::new();
         let resource_monitor = ResourceMonitor::new();
         let adaptive_tuner = AdaptiveTuner::new();
 
-        let current_state = OptimizationState {
-            parameters: initialparameters,
-        };
+        let kind = HardwareOptimizerKind::recommend_for(&platform, &config);
+        let current_state = OptimizationState::new(
+            initialparameters,
+            kind,
+            base_learning_rate,
+            accumulation_steps_for(&config.memory_strategy),
+        );
 
         Self {
             platform,
@@ -485,7 +469,113 @@ impl<
                 self.optimize_for_distributed(num_nodes, network_bandwidth, &node_hardware)?;
             }
         }
+        self.sync_optimizer_with_config();
         Ok(())
+    }
+
+    /// Re-align the optimization state with the current configuration.
+    ///
+    /// The gradient accumulation window always follows the configured
+    /// [`MemoryStrategy`] — changing it mid-run only changes how many
+    /// micro-batches are averaged into the next update.
+    ///
+    /// The optimizer family is only rebuilt **before the first update**, because
+    /// swapping optimizers mid-run would throw away the accumulated moment state
+    /// and restart the effective schedule. After training has started, the new
+    /// recommendation is reported by [`Self::recommended_optimizer_kind`] and
+    /// takes effect only when the caller explicitly asks for it via
+    /// [`Self::adopt_recommended_optimizer`].
+    fn sync_optimizer_with_config(&mut self) {
+        self.current_state
+            .set_accumulation_steps(accumulation_steps_for(&self.config.memory_strategy));
+
+        if self.current_state.step_count() == 0 {
+            let recommended = self.recommended_optimizer_kind();
+            if recommended != self.current_state.optimizer_kind() {
+                self.current_state.rebuild_optimizer(recommended);
+            }
+        }
+    }
+
+    /// Optimizer family the current platform and configuration call for.
+    pub fn recommended_optimizer_kind(&self) -> HardwareOptimizerKind {
+        HardwareOptimizerKind::recommend_for(&self.platform, &self.config)
+    }
+
+    /// Adopt the current recommendation, discarding the existing optimizer's
+    /// accumulated state.
+    ///
+    /// Returns the family now in use.
+    pub fn adopt_recommended_optimizer(&mut self) -> HardwareOptimizerKind {
+        let recommended = self.recommended_optimizer_kind();
+        if recommended != self.current_state.optimizer_kind() {
+            self.current_state.rebuild_optimizer(recommended);
+        }
+        recommended
+    }
+
+    /// Apply one gradient through the configured optimizer.
+    ///
+    /// This is the step path the module's hardware analysis exists to configure:
+    /// the optimizer family, the learning rate schedule and the gradient
+    /// accumulation window all come from the platform configuration.
+    pub fn step(&mut self, gradients: &Array<A, D>) -> Result<HardwareStepReport<A>> {
+        self.current_state.step(gradients)
+    }
+
+    /// Current parameters.
+    pub fn parameters(&self) -> &Array<A, D> {
+        self.current_state.parameters()
+    }
+
+    /// The optimization state, for callers that need the step count, the
+    /// learning rate or the optimizer family.
+    pub fn optimization_state(&self) -> &OptimizationState<A, D> {
+        &self.current_state
+    }
+
+    /// Mutable access to the optimization state, for installing a learning rate
+    /// schedule or a caller-supplied optimizer.
+    pub fn optimization_state_mut(&mut self) -> &mut OptimizationState<A, D> {
+        &mut self.current_state
+    }
+
+    /// The adaptive tuner, for inspecting the tuning history and the tuned
+    /// parameters.
+    pub fn tuner(&self) -> &AdaptiveTuner<A> {
+        &self.adaptive_tuner
+    }
+
+    /// Mutable access to the adaptive tuner, for registering the parameters the
+    /// search may move and selecting a [`TuningStrategy`].
+    pub fn tuner_mut(&mut self) -> &mut AdaptiveTuner<A> {
+        &mut self.adaptive_tuner
+    }
+
+    /// Run the configured tuning search, then apply anything it found that this
+    /// module knows how to apply.
+    ///
+    /// A tuned parameter named `batch_size` is written back into the hardware
+    /// configuration (rounded and clamped to at least 1); every other tuned
+    /// parameter is left for the caller to read from
+    /// [`AdaptiveTuner::current_params`], because only the caller knows what it
+    /// means.
+    pub fn tune_parameters<F>(&mut self, evaluate: F) -> Result<TuningOutcome<A>>
+    where
+        F: FnMut(&HashMap<String, A>) -> Result<TuningObservation<A>>,
+    {
+        let outcome = self.adaptive_tuner.tune(evaluate)?;
+
+        if let Some(batch_size) = tuned_value_as_f64(&outcome.best_parameters, "batch_size") {
+            if !batch_size.is_finite() {
+                return Err(OptimError::InvalidParameter(
+                    "the tuner produced a non-finite batch_size".to_string(),
+                ));
+            }
+            self.config.batch_size = batch_size.round().max(1.0) as usize;
+        }
+
+        Ok(outcome)
     }
 
     /// CPU-specific optimizations
@@ -496,7 +586,8 @@ impl<
         simd_support: SIMDSupport,
     ) -> Result<()> {
         // Optimize batch _size for cache efficiency
-        let cache_friendly_batch_size = (cache_size / 4) / self.current_state.parameters.len(); // Rough estimate
+        let cache_friendly_batch_size =
+            (cache_size / 4) / self.current_state.parameters().len().max(1); // Rough estimate
         self.config.batch_size = cache_friendly_batch_size.clamp(16, 512);
 
         // Configure parallelization based on cores
@@ -794,7 +885,8 @@ impl<
 
     /// Adaptive tuning based on performance feedback
     pub fn adaptive_tune(&mut self, targetperformance: A) -> Result<()> {
-        self.adaptive_tuner.performance_target = targetperformance;
+        self.adaptive_tuner
+            .set_performance_target(targetperformance);
 
         // Simple adaptive tuning logic
         let current_performance = self.get_average_performance();
@@ -989,21 +1081,6 @@ impl<A: Float + Send + Sync> ResourceMonitor<A> {
             cpu_utilization: A::zero(),
             power_consumption: A::zero(),
             temperature: A::zero(),
-        }
-    }
-}
-
-impl<A: Float + Send + Sync> Default for AdaptiveTuner<A> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<A: Float + Send + Sync> AdaptiveTuner<A> {
-    /// Create a new adaptive tuner
-    pub fn new() -> Self {
-        Self {
-            performance_target: scalar_or(100.0, A::zero()),
         }
     }
 }
@@ -1249,5 +1326,210 @@ mod tests {
             let config = optimizer.get_config();
             assert!(config.batch_size > 0);
         }
+    }
+
+    // --- Real optimization step path -------------------------------------
+    //
+    // `OptimizationState` used to hold a parameter array and nothing else: the
+    // module analysed hardware and recommended strategies but never ran an
+    // optimizer step, so a `HardwareAwareOptimizer` could not move a loss.
+
+    /// The headline regression: N steps on a quadratic must reduce the loss.
+    #[test]
+    fn the_hardware_aware_optimizer_actually_optimizes() {
+        let platform = HardwarePlatform::CPU {
+            cores: 8,
+            cache_size: 32 * 1024 * 1024,
+            simd_support: SIMDSupport::AVX,
+        };
+
+        let mut optimizer = HardwareAwareOptimizer::new_with_learning_rate(
+            platform,
+            Array1::from_vec(vec![2.0, -3.0, 1.5]),
+            0.05,
+        );
+        optimizer
+            .optimize_for_hardware()
+            .expect("hardware configuration must succeed");
+
+        let loss = |parameters: &Array1<f64>| -> f64 { parameters.iter().map(|&x| x * x).sum() };
+        let initial_loss = loss(optimizer.parameters());
+
+        for _ in 0..300 {
+            let gradient = optimizer.parameters().mapv(|x| 2.0 * x);
+            let report = optimizer.step(&gradient).expect("step must succeed");
+            assert!(report.applied);
+        }
+
+        let final_loss = loss(optimizer.parameters());
+        assert_eq!(optimizer.optimization_state().step_count(), 300);
+        // The bound is loose on purpose: an adaptive optimizer settles into an
+        // oscillation of amplitude ~lr around the minimum, so pinning the exact
+        // residual would make this a flaky test rather than a stronger one.
+        assert!(
+            final_loss < initial_loss * 1e-2,
+            "the loss did not fall ({initial_loss} -> {final_loss})"
+        );
+    }
+
+    /// The hardware analysis must actually select the optimizer: a TPU's large
+    /// batch calls for LAMB, a low-power edge device for SGD.
+    #[test]
+    fn the_configuration_selects_the_optimizer_family() {
+        let tpu = HardwarePlatform::TPU {
+            version: TPUVersion::V4,
+            matrix_units: 8,
+            hbm_size: 32 * 1024 * 1024 * 1024,
+        };
+        let mut optimizer = HardwareAwareOptimizer::new(tpu, Array1::from_vec(vec![1.0, 2.0, 3.0]));
+        optimizer
+            .optimize_for_hardware()
+            .expect("hardware configuration must succeed");
+        assert_eq!(
+            optimizer.optimization_state().optimizer_kind(),
+            HardwareOptimizerKind::Lamb,
+            "a 512-sample TPU batch calls for a large-batch optimizer"
+        );
+
+        let edge = HardwarePlatform::Edge {
+            power_budget: 2.0,
+            memory_limit: 256 * 1024 * 1024,
+            quantization_support: QuantizationSupport::Int8,
+        };
+        let mut optimizer =
+            HardwareAwareOptimizer::new(edge, Array1::from_vec(vec![1.0, 2.0, 3.0]));
+        optimizer
+            .optimize_for_hardware()
+            .expect("hardware configuration must succeed");
+        assert_eq!(
+            optimizer.optimization_state().optimizer_kind(),
+            HardwareOptimizerKind::Sgd,
+            "a 2 W budget cannot afford Adam's second moment"
+        );
+    }
+
+    /// A configured gradient-accumulation memory strategy must reach the step
+    /// path instead of being a description nothing reads.
+    #[test]
+    fn the_memory_strategy_drives_gradient_accumulation() {
+        // A low-bandwidth GPU is configured with 4-step gradient accumulation.
+        let platform = HardwarePlatform::GPU {
+            memory: 8 * 1024 * 1024 * 1024,
+            compute_units: 40,
+            memory_bandwidth: 300.0,
+            architecture: GPUArchitecture::Turing,
+        };
+        let mut optimizer = HardwareAwareOptimizer::new_with_learning_rate(
+            platform,
+            Array1::from_vec(vec![0.0, 0.0]),
+            0.1,
+        );
+        assert_eq!(optimizer.optimization_state().accumulation_steps(), 1);
+
+        optimizer
+            .optimize_for_hardware()
+            .expect("hardware configuration must succeed");
+        assert!(matches!(
+            optimizer.get_config().memory_strategy,
+            MemoryStrategy::GradientAccumulation {
+                accumulation_steps: 4
+            }
+        ));
+        assert_eq!(optimizer.optimization_state().accumulation_steps(), 4);
+
+        let gradient = Array1::from_vec(vec![1.0, 1.0]);
+        for _ in 0..3 {
+            assert!(!optimizer.step(&gradient).expect("step").applied);
+        }
+        assert!(optimizer.step(&gradient).expect("step").applied);
+        assert_eq!(optimizer.optimization_state().step_count(), 1);
+    }
+
+    /// Re-selecting the optimizer must not silently discard training state.
+    #[test]
+    fn the_optimizer_is_not_swapped_out_from_under_a_running_step_count() {
+        let platform = HardwarePlatform::CPU {
+            cores: 4,
+            cache_size: 8 * 1024 * 1024,
+            simd_support: SIMDSupport::SSE,
+        };
+        let mut optimizer = HardwareAwareOptimizer::new(platform, Array1::from_vec(vec![1.0, 1.0]));
+        assert_eq!(
+            optimizer.optimization_state().optimizer_kind(),
+            HardwareOptimizerKind::Adam
+        );
+
+        optimizer
+            .step(&Array1::from_vec(vec![1.0, 1.0]))
+            .expect("step");
+
+        // Force a recommendation change after training has started.
+        optimizer.config.memory_strategy = MemoryStrategy::CPUOffloading { offload_ratio: 0.8 };
+        optimizer.sync_optimizer_with_config();
+        assert_eq!(
+            optimizer.optimization_state().optimizer_kind(),
+            HardwareOptimizerKind::Adam,
+            "a mid-run rebuild would throw away Adam's moments"
+        );
+        assert_eq!(
+            optimizer.recommended_optimizer_kind(),
+            HardwareOptimizerKind::Sgd,
+            "the new recommendation must still be reported"
+        );
+
+        assert_eq!(
+            optimizer.adopt_recommended_optimizer(),
+            HardwareOptimizerKind::Sgd
+        );
+        assert_eq!(
+            optimizer.optimization_state().optimizer_kind(),
+            HardwareOptimizerKind::Sgd
+        );
+    }
+
+    /// The tuner must reach the hardware configuration: a tuned `batch_size`
+    /// has to be written back.
+    #[test]
+    fn tuning_writes_the_batch_size_back_into_the_configuration() {
+        let platform = HardwarePlatform::CPU {
+            cores: 8,
+            cache_size: 32 * 1024 * 1024,
+            simd_support: SIMDSupport::AVX,
+        };
+        let mut optimizer =
+            HardwareAwareOptimizer::new(platform, Array1::from_vec(vec![1.0, 2.0, 3.0]));
+
+        optimizer
+            .tuner_mut()
+            .add_parameter(TunableParameter::new("batch_size", 8.0, 256.0).expect("valid range"))
+            .expect("register batch_size");
+        optimizer
+            .tuner_mut()
+            .set_strategy(TuningStrategy::GridSearch { resolution: 32 });
+        optimizer.tuner_mut().set_performance_target(1e9);
+
+        // A synthetic throughput curve peaking at a batch size of 64.
+        let outcome = optimizer
+            .tune_parameters(|params| {
+                let batch_size = params.get("batch_size").copied().unwrap_or(0.0);
+                Ok(TuningObservation {
+                    performance: 1000.0 - (batch_size - 64.0).abs(),
+                    resource_usage: batch_size,
+                })
+            })
+            .expect("tuning must run");
+
+        assert_eq!(outcome.evaluations, 32);
+        let tuned = outcome
+            .best_parameters
+            .get("batch_size")
+            .copied()
+            .expect("batch_size tuned");
+        assert!(
+            (tuned - 64.0).abs() < 16.0,
+            "the search did not approach the peak: {tuned}"
+        );
+        assert_eq!(optimizer.get_config().batch_size, tuned.round() as usize);
+        assert_eq!(optimizer.tuner().tuning_history().len(), 32);
     }
 }

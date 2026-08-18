@@ -567,16 +567,15 @@ impl CiCdAutomation {
                 "automated".to_string(),
             ];
 
+            let file_name = report.file_path.file_name().ok_or_else(|| {
+                OptimError::InvalidConfig(format!(
+                    "report path {} has no file name component",
+                    report.file_path.display()
+                ))
+            })?;
             let _artifact_url = self.artifact_manager.upload_artifact(
                 &report.file_path,
-                &format!(
-                    "reports/{}",
-                    report
-                        .file_path
-                        .file_name()
-                        .expect("unwrap failed")
-                        .to_string_lossy()
-                ),
+                &format!("reports/{}", file_name.to_string_lossy()),
                 tags,
             )?;
         }
@@ -620,9 +619,15 @@ impl CiCdAutomation {
     }
 
     /// Update automation statistics
+    // NOTE: `test_results` is intentionally unused. `AutomationStatistics` is
+    // purely aggregate counters (see its definition) with nothing per-test (e.g.
+    // a flaky-test tracker or slowest-test record) to fold the individual results
+    // into; `statistics` (the pre-aggregated `TestSuiteStatistics`) already
+    // supplies everything this method updates. Adding per-test history would be a
+    // new field/feature, not a mechanical use of the parameter already here.
     fn update_statistics(
         &mut self,
-        test_results: &[CiCdTestResult],
+        _test_results: &[CiCdTestResult],
         statistics: &TestSuiteStatistics,
         reports: &[GeneratedReport],
         success: bool,

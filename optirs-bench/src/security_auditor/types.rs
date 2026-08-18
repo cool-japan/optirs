@@ -300,6 +300,8 @@ pub enum PrivacyAttackScenario {
     BudgetExhaustionAttack,
     /// Noise reduction attack
     NoiseReductionAttack,
+    /// Information leakage in secure multi-party computation
+    InformationLeakage,
 }
 
 /// Composition methods for privacy

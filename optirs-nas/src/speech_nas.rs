@@ -40,7 +40,7 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::speech_nas::{SpeechModelEvaluation, SpeechNasEngine};
 //! use scirs2_core::random::Random;
 //!
@@ -486,9 +486,9 @@ impl SpeechNasEngine {
     ///
     /// Depth is sampled uniformly from `[min_depth, max_depth]`. The first
     /// layer is drawn preferring [`LayerPositionConstraint::StartOnly`]
-    /// with probability [`PREFER_START_PROB`]; the last layer is drawn
+    /// with probability `PREFER_START_PROB`; the last layer is drawn
     /// preferring [`LayerPositionConstraint::EndOnly`] with probability
-    /// [`PREFER_END_PROB`]; middle layers are drawn from the body pool.
+    /// `PREFER_END_PROB`; middle layers are drawn from the body pool.
     pub fn propose<R: Rng>(&mut self, rng: &mut Random<R>) -> Result<SpeechModelConfig> {
         self.ensure_search_space_valid()?;
 
@@ -539,7 +539,7 @@ impl SpeechNasEngine {
     /// Mutate a model by either substituting a non-edge layer or perturbing
     /// the hyperparameters of an existing one.
     ///
-    /// With probability [`SUBSTITUTE_PROB`] the engine replaces a single
+    /// With probability `SUBSTITUTE_PROB` the engine replaces a single
     /// non-first / non-last layer with a different body-eligible layer.
     /// Otherwise it perturbs a hyperparameter — `Conv1D::channels` is
     /// scaled by ±25 %, `Dropout::p_milli` shifts by ±50, recurrent

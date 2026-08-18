@@ -844,7 +844,7 @@ mod tests {
         let a = graph.add_op(OpKind::Scale, vec![], vec![64, 64], 4);
         let b = graph.add_op(OpKind::Relu, vec![a], vec![64, 64], 4);
         let c = graph.add_op(OpKind::Sigmoid, vec![b], vec![64, 64], 4);
-        let d = graph.add_op(OpKind::Tanh, vec![c], vec![64, 64], 4);
+        graph.add_op(OpKind::Tanh, vec![c], vec![64, 64], 4);
 
         let plan = FusionPlanner::new()
             .plan(&graph)

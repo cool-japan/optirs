@@ -250,6 +250,24 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> TPUBacke
             );
         }
 
+        // Snapshot while the reservations are still held. Taken after the
+        // release below it would record an empty live set every time, making
+        // the snapshot series structurally useless no matter how much real
+        // allocation happened -- so peak occupancy is captured here.
+        let (peak_largest_free, peak_free_count) = self.memory_manager.free_block_summary();
+        self.xla_compiler
+            .profiling_mut()
+            .capture_memory_snapshot(FragmentationInfo {
+                external_fragmentation: self.memory_manager.usage_statistics().fragmentation_ratio,
+                // The pools hand out exactly the bytes requested (only the buddy
+                // strategy rounds, and it rounds the *request*), so no allocated
+                // block carries unused slack: internal fragmentation is genuinely
+                // zero here rather than unmeasured.
+                internal_fragmentation: 0.0,
+                largest_free_block: peak_largest_free,
+                free_block_count: peak_free_count,
+            });
+
         let execution =
             self.execution_engine
                 .execute_task(task, computation, devices, &memory_allocation);
@@ -285,14 +303,12 @@ impl<T: Float + Debug + Default + Clone + Send + Sync + std::iter::Sum> TPUBacke
         self.memory_manager.release_allocation(&memory_allocation);
 
         // Mirror the release into the profile, together with the free-list
-        // shape the allocator reports once the blocks are back and coalesced.
+        // shape the allocator reports once the blocks are back and coalesced --
+        // so the series holds a peak snapshot (taken above, while the blocks
+        // were live) and a settled one, rather than only-empty snapshots.
         let (largest_free_block, free_block_count) = self.memory_manager.free_block_summary();
         let fragmentation = FragmentationInfo {
             external_fragmentation: self.memory_manager.usage_statistics().fragmentation_ratio,
-            // The pools hand out exactly the bytes requested (only the buddy
-            // strategy rounds, and it rounds the *request*), so no allocated
-            // block carries unused slack: internal fragmentation is genuinely
-            // zero here rather than unmeasured.
             internal_fragmentation: 0.0,
             largest_free_block,
             free_block_count,

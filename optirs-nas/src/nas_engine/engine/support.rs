@@ -3,10 +3,8 @@
 use crate::error::Result;
 use crate::multi_objective;
 use crate::nas_engine::config::*;
-use crate::nas_engine::resources::*;
 use crate::nas_engine::results::*;
 use scirs2_core::numeric::Float;
-use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};

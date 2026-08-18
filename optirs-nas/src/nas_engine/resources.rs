@@ -8,15 +8,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
-use super::config::{
-    HardwareResources, ResourceConstraints, ResourceViolationHandling, TimeConstraints,
-};
+use super::config::ResourceConstraints;
 use super::results::{ResourceUsage, ResourceUsageSummary};
 use super::telemetry::{StdTelemetry, TelemetrySample, TelemetrySource};
-use crate::error::{OptimError, Result};
+use crate::error::Result;
 
 /// Resource monitor for tracking and managing system resources
 pub struct ResourceMonitor<T: Float + Debug + Send + Sync + 'static> {

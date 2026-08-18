@@ -4,6 +4,9 @@
 // for AWS, Azure, GCP, GitHub Actions, and custom cloud providers.
 
 use crate::error::{OptimError, Result};
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
 use std::collections::HashMap;
 
 use super::config::*;

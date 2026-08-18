@@ -2,7 +2,11 @@
 //!
 //! 🤖 Generated with [SplitRS](https://github.com/cool-japan/splitrs)
 
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports (this module currently has no non-test functions).
+#[cfg(test)]
 use super::documentationanalyzer_type::DocumentationAnalyzer;
+#[cfg(test)]
 use super::types::AnalyzerConfig;
 
 #[cfg(test)]

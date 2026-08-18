@@ -1,7 +1,7 @@
 // Random search baseline strategy
 
 use scirs2_core::numeric::Float;
-use scirs2_core::random::{Random, Rng as SCRRng};
+use scirs2_core::random::Random;
 use scirs2_core::RngExt;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
@@ -289,44 +289,45 @@ mod tests {
 
     /// Two-component search space with a continuous and a log-uniform range.
     fn search_space() -> SearchSpaceConfig {
-        let mut space = SearchSpaceConfig::default();
-        space.components = vec![
-            OptimizerComponentConfig {
-                component_type: ConfigComponentType::Adam,
-                hyperparameter_ranges: {
-                    let mut ranges = HashMap::new();
-                    ranges.insert(
-                        "learning_rate".to_string(),
-                        ParameterRange::LogUniform(1e-4, 1e-1),
-                    );
-                    ranges.insert("beta1".to_string(), ParameterRange::Continuous(0.8, 0.99));
-                    ranges
+        SearchSpaceConfig {
+            components: vec![
+                OptimizerComponentConfig {
+                    component_type: ConfigComponentType::Adam,
+                    hyperparameter_ranges: {
+                        let mut ranges = HashMap::new();
+                        ranges.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::LogUniform(1e-4, 1e-1),
+                        );
+                        ranges.insert("beta1".to_string(), ParameterRange::Continuous(0.8, 0.99));
+                        ranges
+                    },
+                    complexity_score: 1.0,
+                    memory_requirement: 1024,
+                    computational_cost: 1.0,
+                    compatibility_constraints: Vec::new(),
                 },
-                complexity_score: 1.0,
-                memory_requirement: 1024,
-                computational_cost: 1.0,
-                compatibility_constraints: Vec::new(),
-            },
-            OptimizerComponentConfig {
-                component_type: ConfigComponentType::SGD,
-                hyperparameter_ranges: {
-                    let mut ranges = HashMap::new();
-                    ranges.insert(
-                        "learning_rate".to_string(),
-                        ParameterRange::Continuous(1e-3, 1e-1),
-                    );
-                    ranges
+                OptimizerComponentConfig {
+                    component_type: ConfigComponentType::SGD,
+                    hyperparameter_ranges: {
+                        let mut ranges = HashMap::new();
+                        ranges.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::Continuous(1e-3, 1e-1),
+                        );
+                        ranges
+                    },
+                    complexity_score: 0.5,
+                    memory_requirement: 512,
+                    computational_cost: 0.5,
+                    compatibility_constraints: Vec::new(),
                 },
-                complexity_score: 0.5,
-                memory_requirement: 512,
-                computational_cost: 0.5,
-                compatibility_constraints: Vec::new(),
-            },
-        ];
-        space.min_components = 1;
-        space.max_components = 4;
-        space.max_connections = 8;
-        space
+            ],
+            min_components: 1,
+            max_components: 4,
+            max_connections: 8,
+            ..SearchSpaceConfig::default()
+        }
     }
 
     fn generate(

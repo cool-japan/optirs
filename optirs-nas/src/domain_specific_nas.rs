@@ -7,7 +7,6 @@
 
 use crate::architecture::{
     Architecture, ComponentPosition, ComponentType, Connection, ConnectionType, OptimizerComponent,
-    PerformanceMetrics,
 };
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::ScalarOperand;
@@ -277,8 +276,6 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
     ///
     /// Returns a list of valid architectures sorted by score (descending).
     pub fn search(&mut self, budget: usize) -> Result<Vec<Architecture>> {
-        use scirs2_core::random::Rng;
-
         if budget == 0 {
             return Err(OptimError::InvalidConfig(
                 "Search budget must be greater than 0".to_string(),
@@ -445,8 +442,6 @@ impl<T: Float + Debug + Send + Sync + 'static + ScalarOperand> DomainNASEngine<T
         rng: &mut scirs2_core::random::Random,
         index: usize,
     ) -> Architecture {
-        use scirs2_core::random::Rng;
-
         let allowed = &self.search_space.allowed_components;
         let num_components = rng.gen_range(
             self.search_space.min_depth.max(1)..=self.search_space.max_depth.min(allowed.len() * 3),

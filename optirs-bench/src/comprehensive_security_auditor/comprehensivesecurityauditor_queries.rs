@@ -142,7 +142,7 @@ impl ComprehensiveSecurityAuditor {
         &mut self,
         projectpath: &Path,
     ) -> Result<DependencyScanResult> {
-        scan_dependencies_offline(projectpath)
+        scan_dependencies_offline(projectpath, &self.dependency_scanner.config)
     }
 
     /// Run static analysis on project files

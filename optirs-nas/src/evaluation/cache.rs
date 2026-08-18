@@ -5,7 +5,7 @@
 use scirs2_core::numeric::Float;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use super::types::*;
 use crate::nas_engine::results::EvaluationResults;
@@ -29,9 +29,6 @@ pub struct EvaluationCache<T: Float + Debug + Send + Sync + 'static> {
 
     /// Cache metadata
     metadata: CacheMetadata,
-
-    /// Access patterns
-    access_patterns: AccessPatterns,
 
     /// Maximum number of retained entries.
     capacity: usize,
@@ -83,32 +80,6 @@ pub struct CacheMetadata {
     pub version: String,
 }
 
-/// Access patterns for cache optimization
-#[derive(Debug)]
-pub struct AccessPatterns {
-    /// Frequency distribution
-    frequency_distribution: HashMap<String, usize>,
-
-    /// Temporal patterns
-    temporal_patterns: Vec<TemporalPattern>,
-
-    /// Correlation patterns
-    correlation_patterns: HashMap<String, Vec<String>>,
-}
-
-/// Temporal access pattern
-#[derive(Debug, Clone)]
-pub struct TemporalPattern {
-    /// Time window
-    time_window: Duration,
-
-    /// Access frequency
-    access_frequency: f64,
-
-    /// Pattern type
-    pattern_type: TemporalPatternType,
-}
-
 impl<T: Float + Debug + Default + Send + Sync> EvaluationCache<T> {
     pub(crate) fn new() -> Self {
         Self::with_capacity(DEFAULT_CACHE_CAPACITY, CacheEvictionPolicy::LRU)
@@ -126,11 +97,6 @@ impl<T: Float + Debug + Default + Send + Sync> EvaluationCache<T> {
                 cache_size_bytes: 0,
                 last_cleanup: SystemTime::now(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            access_patterns: AccessPatterns {
-                frequency_distribution: HashMap::new(),
-                temporal_patterns: Vec::new(),
-                correlation_patterns: HashMap::new(),
             },
             capacity: capacity.max(1),
             eviction_policy,
@@ -152,12 +118,6 @@ impl<T: Float + Debug + Default + Send + Sync> EvaluationCache<T> {
         }
         entry.access_count += 1;
         entry.last_access_tick = tick;
-
-        *self
-            .access_patterns
-            .frequency_distribution
-            .entry(key.to_string())
-            .or_insert(0) += 1;
 
         self.evaluations.get(key)
     }
@@ -204,13 +164,12 @@ impl<T: Float + Debug + Default + Send + Sync> EvaluationCache<T> {
                 // Deterministic stand-in for random selection: the smallest key
                 // by ordering. Avoids pulling an RNG into the cache while still
                 // being independent of access history.
-                CacheEvictionPolicy::Random => self.evaluations.keys().min().map(|k| k.clone()),
+                CacheEvictionPolicy::Random => self.evaluations.keys().min().cloned(),
             };
 
             match victim {
                 Some(key) => {
                     self.evaluations.remove(&key);
-                    self.access_patterns.frequency_distribution.remove(&key);
                 }
                 None => break,
             }
@@ -234,10 +193,36 @@ impl<T: Float + Debug + Default + Send + Sync> EvaluationCache<T> {
         self.evaluations.values().map(|v| v.access_count).sum()
     }
 
+    /// Number of times `key` has been read out of the cache, or `None` if it is
+    /// not resident.
+    ///
+    /// The access frequency used to be tracked a second time, in an
+    /// `AccessPatterns.frequency_distribution` map that nothing ever read; the
+    /// per-entry counter that already drives LFU eviction is the single source of
+    /// truth now. `AccessPatterns` also carried `temporal_patterns` and
+    /// `correlation_patterns` — a `Vec` and a `HashMap` that were constructed
+    /// empty, never written and never read, describing an access-pattern analysis
+    /// this cache does not perform. Both are gone.
+    pub fn access_frequency(&self, key: &str) -> Option<usize> {
+        self.evaluations.get(key).map(|entry| entry.access_count)
+    }
+
+    /// Key of the most-read resident entry, ties broken by key so the answer is
+    /// deterministic. `None` when the cache is empty.
+    pub fn hottest_key(&self) -> Option<&str> {
+        self.evaluations
+            .iter()
+            .max_by(|(left_key, left), (right_key, right)| {
+                left.access_count
+                    .cmp(&right.access_count)
+                    .then_with(|| right_key.cmp(left_key))
+            })
+            .map(|(key, _)| key.as_str())
+    }
+
     /// Clear the cache
     pub fn clear(&mut self) {
         self.evaluations.clear();
-        self.access_patterns.frequency_distribution.clear();
         self.metadata.total_entries = 0;
         self.metadata.cache_size_bytes = 0;
         self.metadata.last_cleanup = SystemTime::now();
@@ -335,6 +320,34 @@ mod tests {
         assert_eq!(cache.len(), 2);
         assert!(cache.contains("hot"));
         assert!(!cache.contains("cold"));
+    }
+
+    #[test]
+    fn test_access_frequency_and_hottest_key_report_real_reuse() {
+        let mut cache = EvaluationCache::<f64>::with_capacity(4, CacheEvictionPolicy::LRU);
+        assert!(cache.hottest_key().is_none());
+
+        cache.insert("cold".to_string(), results(0.1));
+        cache.insert("warm".to_string(), results(0.2));
+        cache.insert("hot".to_string(), results(0.3));
+
+        assert_eq!(cache.access_frequency("hot"), Some(0));
+        assert_eq!(cache.access_frequency("absent"), None);
+
+        for _ in 0..5 {
+            assert!(cache.get("hot").is_some());
+        }
+        assert!(cache.get("warm").is_some());
+
+        assert_eq!(cache.access_frequency("hot"), Some(5));
+        assert_eq!(cache.access_frequency("warm"), Some(1));
+        assert_eq!(cache.access_frequency("cold"), Some(0));
+        assert_eq!(cache.hottest_key(), Some("hot"));
+
+        // Eviction must take the counter with it, not leave a stale reading.
+        cache.clear();
+        assert_eq!(cache.access_frequency("hot"), None);
+        assert!(cache.hottest_key().is_none());
     }
 
     #[test]

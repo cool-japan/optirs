@@ -428,13 +428,15 @@ fn cholesky<T: Float + Debug + Send + Sync + 'static>(a: &Array2<T>) -> Option<A
             }
 
             if i == j {
-                if !(sum > T::zero()) || !sum.is_finite() {
+                // Reject non-positive and non-finite pivots alike: the matrix is
+                // not positive definite, so there is no Cholesky factor.
+                if sum <= T::zero() || !sum.is_finite() {
                     return None;
                 }
                 l[[i, j]] = sum.sqrt();
             } else {
                 let pivot = l[[j, j]];
-                if !(pivot > T::zero()) {
+                if pivot <= T::zero() || pivot.is_nan() {
                     return None;
                 }
                 l[[i, j]] = sum / pivot;
@@ -462,7 +464,7 @@ fn forward_substitution<T: Float + Debug + Send + Sync + 'static>(
             sum = sum - l[[i, k]] * y[k];
         }
         let pivot = l[[i, i]];
-        if !(pivot.abs() > T::zero()) {
+        if pivot.abs() <= T::zero() || pivot.is_nan() {
             return None;
         }
         y[i] = sum / pivot;
@@ -487,7 +489,7 @@ fn back_substitution<T: Float + Debug + Send + Sync + 'static>(
             sum = sum - l[[k, i]] * x[k];
         }
         let pivot = l[[i, i]];
-        if !(pivot.abs() > T::zero()) {
+        if pivot.abs() <= T::zero() || pivot.is_nan() {
             return None;
         }
         x[i] = sum / pivot;
@@ -1089,7 +1091,7 @@ mod tests {
     }
 
     fn toy_dataset() -> (Vec<Array1<f64>>, Vec<f64>) {
-        let xs = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
+        let xs = [-2.0, -1.0, 0.0, 1.0, 2.0];
         let inputs: Vec<Array1<f64>> = xs.iter().map(|&x| point(x)).collect();
         // A smooth target so the GP has something to interpolate.
         let targets: Vec<f64> = xs.iter().map(|&x| (x).sin()).collect();
@@ -1297,42 +1299,43 @@ mod tests {
         use crate::nas_engine::config::{
             ComponentType as ConfigComponentType, OptimizerComponentConfig, ParameterRange,
         };
-        let mut space = SearchSpaceConfig::default();
-        space.components = vec![
-            OptimizerComponentConfig {
-                component_type: ConfigComponentType::Adam,
-                hyperparameter_ranges: {
-                    let mut r = HashMap::new();
-                    r.insert(
-                        "learning_rate".to_string(),
-                        ParameterRange::LogUniform(1e-4, 1e-1),
-                    );
-                    r
+        SearchSpaceConfig {
+            components: vec![
+                OptimizerComponentConfig {
+                    component_type: ConfigComponentType::Adam,
+                    hyperparameter_ranges: {
+                        let mut r = HashMap::new();
+                        r.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::LogUniform(1e-4, 1e-1),
+                        );
+                        r
+                    },
+                    complexity_score: 1.0,
+                    memory_requirement: 1024,
+                    computational_cost: 1.0,
+                    compatibility_constraints: Vec::new(),
                 },
-                complexity_score: 1.0,
-                memory_requirement: 1024,
-                computational_cost: 1.0,
-                compatibility_constraints: Vec::new(),
-            },
-            OptimizerComponentConfig {
-                component_type: ConfigComponentType::SGD,
-                hyperparameter_ranges: {
-                    let mut r = HashMap::new();
-                    r.insert(
-                        "learning_rate".to_string(),
-                        ParameterRange::Continuous(1e-3, 1e-1),
-                    );
-                    r
+                OptimizerComponentConfig {
+                    component_type: ConfigComponentType::SGD,
+                    hyperparameter_ranges: {
+                        let mut r = HashMap::new();
+                        r.insert(
+                            "learning_rate".to_string(),
+                            ParameterRange::Continuous(1e-3, 1e-1),
+                        );
+                        r
+                    },
+                    complexity_score: 0.5,
+                    memory_requirement: 512,
+                    computational_cost: 0.5,
+                    compatibility_constraints: Vec::new(),
                 },
-                complexity_score: 0.5,
-                memory_requirement: 512,
-                computational_cost: 0.5,
-                compatibility_constraints: Vec::new(),
-            },
-        ];
-        space.min_components = 1;
-        space.max_components = 3;
-        space
+            ],
+            min_components: 1,
+            max_components: 3,
+            ..SearchSpaceConfig::default()
+        }
     }
 
     #[test]

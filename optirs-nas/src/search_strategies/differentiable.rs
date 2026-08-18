@@ -13,7 +13,6 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 
 use crate::architecture::{ComponentPosition, ComponentType};
-#[allow(unused_imports)]
 use crate::error::Result;
 use crate::nas_engine::{OptimizerArchitecture, SearchResult, SearchSpaceConfig};
 use crate::EvaluationMetric;
@@ -41,7 +40,7 @@ pub struct DifferentiableSearch<T: Float + Debug + Send + Sync + 'static> {
 ///
 /// Applies momentum-smoothed gradient ascent together with decoupled weight
 /// decay, mutating the architecture-weight tensor in place. Both `momentum` and
-/// `weight_decay` are genuinely applied by [`WeightOptimizer::step`].
+/// `weight_decay` are genuinely applied by `WeightOptimizer::step`.
 #[derive(Debug)]
 pub struct WeightOptimizer<T: Float + Debug + Send + Sync + 'static> {
     learning_rate: T,
@@ -100,8 +99,6 @@ pub struct MemoryEfficientDARTS<T: Float + Debug + Send + Sync + 'static> {
     discretization_strategy: DiscretizationStrategy,
     /// Search statistics
     statistics: SearchStrategyStatistics<T>,
-    /// Channel sampling seed for reproducibility
-    channel_seed: u64,
     /// Running (EMA) reward baseline for the REINFORCE advantage.
     reward_baseline: T,
 }
@@ -376,7 +373,6 @@ impl<
             edge_weights: Array1::ones(num_edges),
             discretization_strategy: DiscretizationStrategy::Progressive,
             statistics: SearchStrategyStatistics::default(),
-            channel_seed: 42,
             reward_baseline: T::zero(),
         }
     }
@@ -387,6 +383,12 @@ impl<
     /// policy gradient has to chain through this mask: a dropped operation does
     /// not appear in the sampling logits, so its architecture weight receives no
     /// credit at all.
+    /// Channel selection is *deterministic*: the top-`k` operations by weight
+    /// magnitude. PC-DARTS samples its channel subset at random, and this struct
+    /// used to carry a `channel_seed: u64` for that — set to `42` in the
+    /// constructor and read by nothing, because the deterministic rule below needs
+    /// no randomness. The field is gone; if stochastic partial channels are ever
+    /// implemented, the seed belongs with the sampler that uses it.
     fn partial_channel_mask(&self, weights: &Array3<T>) -> Array3<T> {
         let num_edges = weights.dim().0;
         let num_ops = weights.dim().1;

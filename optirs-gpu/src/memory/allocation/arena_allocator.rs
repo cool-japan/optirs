@@ -5,12 +5,9 @@
 // extremely fast for allocation and are ideal for temporary allocations
 // that can be freed all at once.
 
-#[allow(dead_code)]
-use std::collections::VecDeque;
-use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Main arena allocator implementation
 pub struct ArenaAllocator {
@@ -98,7 +95,14 @@ impl Default for ArenaConfig {
 }
 
 /// Growth strategy for resizable arenas
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Deliberately does not derive `PartialEq`: `Custom` carries a raw fn
+/// pointer, and comparing fn pointers for equality is unreliable (their
+/// addresses are not guaranteed unique across codegen units and identical
+/// functions can be merged). Nothing in this crate compares two
+/// `GrowthStrategy` values, so the honest fix is to not offer a comparison
+/// that cannot mean what it appears to mean, rather than derive one anyway.
+#[derive(Debug, Clone)]
 pub enum GrowthStrategy {
     /// Fixed size arena (no growth)
     Fixed,
@@ -137,6 +141,10 @@ pub struct ArenaStats {
     pub first_allocation_time: Option<Instant>,
     /// Time of last allocation
     pub last_allocation_time: Option<Instant>,
+    /// Bytes skipped to satisfy a caller-requested alignment stricter than
+    /// the arena's own (see [`ArenaAllocator::allocate_aligned`]) — real
+    /// wasted space, not counted in `total_bytes_allocated`.
+    pub bytes_wasted_to_alignment: u64,
 }
 
 impl ArenaStats {
@@ -186,6 +194,11 @@ impl ArenaStats {
         if total_size > 0 {
             self.utilization_ratio = self.current_bytes_allocated as f64 / total_size as f64;
         }
+    }
+
+    /// Record bytes skipped purely to satisfy an alignment requirement.
+    pub fn record_padding(&mut self, padding: usize) {
+        self.bytes_wasted_to_alignment += padding as u64;
     }
 }
 
@@ -320,6 +333,9 @@ impl ArenaAllocator {
 
         // Update offset to aligned position
         self.current_offset = aligned_offset;
+        if self.config.enable_stats && padding > 0 {
+            self.stats.record_padding(padding);
+        }
 
         // Now allocate normally
         self.allocate(size)
@@ -404,6 +420,24 @@ impl ArenaAllocator {
         }
 
         let checkpoint = &self.checkpoints[handle.index];
+
+        // A checkpoint's index can be reused by an unrelated, later checkpoint
+        // once this same `rollback` truncates `self.checkpoints` past the
+        // position it was originally recorded at (e.g. checkpoint A at index 0
+        // is rolled back -- which truncates the vec to length 0 -- and then a
+        // new checkpoint B is created and also lands at index 0). Trusting
+        // `handle.index` alone would silently roll back to B's offset using a
+        // handle the caller believes still refers to A, or underflow
+        // `current_offset - checkpoint.offset` if B's offset happens to be
+        // larger than the arena's current offset. Cross-check the offset
+        // recorded in the handle at creation time against the checkpoint
+        // currently stored at that index to detect and reject a stale handle.
+        if checkpoint.offset != handle.offset {
+            return Err(ArenaError::InvalidCheckpoint(
+                "stale checkpoint handle: the checkpoint at this index was replaced since the handle was created".to_string(),
+            ));
+        }
+
         let bytes_freed = self.current_offset - checkpoint.offset;
 
         // Rollback state
@@ -807,7 +841,7 @@ impl GrowingArena {
         let new_ptr = self
             .external_allocator
             .as_mut()
-            .expect("unwrap failed")
+            .ok_or_else(|| ArenaError::CannotGrow("No external allocator configured".to_string()))?
             .allocate(actual_new_size)?;
 
         // Move current arena to previous arenas
@@ -998,6 +1032,39 @@ mod tests {
     }
 
     #[test]
+    fn test_allocate_aligned_records_padding_in_stats() {
+        let size = 4096;
+        let memory = vec![0u8; size];
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
+
+        let config = ArenaConfig {
+            alignment: 1,
+            ..ArenaConfig::default()
+        };
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
+        assert_eq!(arena.get_stats().bytes_wasted_to_alignment, 0);
+
+        // With `alignment: 1` this lands the offset at exactly 3 (no
+        // rounding), off of any larger power-of-two boundary.
+        arena.allocate(3).expect("unwrap failed");
+
+        // Aligning to 64 from offset 3 must skip 61 real bytes (3 -> 64).
+        arena
+            .allocate_aligned(10, 64)
+            .expect("aligned allocation should succeed");
+        assert_eq!(arena.get_stats().bytes_wasted_to_alignment, 61);
+
+        // A second aligned allocation that needs no padding (offset is
+        // already 64-aligned after the first one landed exactly on 64+10's
+        // own alignment) must not inflate the counter further than reality.
+        let before = arena.get_stats().bytes_wasted_to_alignment;
+        arena
+            .allocate_aligned(4, 1)
+            .expect("aligned allocation should succeed");
+        assert_eq!(arena.get_stats().bytes_wasted_to_alignment, before);
+    }
+
+    #[test]
     fn test_checkpoints() {
         let size = 4096;
         let memory = vec![0u8; size];
@@ -1019,6 +1086,38 @@ mod tests {
         let usage_after = arena.get_usage();
 
         assert!(usage_after.used_size < usage_before.used_size);
+    }
+
+    #[test]
+    fn test_rollback_rejects_stale_handle_after_index_reuse() {
+        let size = 4096;
+        let memory = vec![0u8; size];
+        let ptr = NonNull::new(memory.as_ptr() as *mut u8).expect("unwrap failed");
+
+        let config = ArenaConfig {
+            enable_checkpoints: true,
+            enable_tracking: true,
+            ..ArenaConfig::default()
+        };
+        let mut arena = ArenaAllocator::new(ptr, size, config).expect("unwrap failed");
+
+        arena.allocate(100).expect("unwrap failed");
+        let handle_a = arena.checkpoint().expect("unwrap failed");
+
+        // Rolling back to A truncates `checkpoints` back to empty, freeing
+        // index 0 for reuse by an unrelated, later checkpoint.
+        arena.rollback(handle_a.clone()).expect("unwrap failed");
+
+        // A brand new checkpoint B now lands at the same index 0 that A used
+        // to occupy, but at a different offset.
+        arena.allocate(50).expect("unwrap failed");
+        arena.checkpoint().expect("unwrap failed");
+
+        // Reusing the now-stale `handle_a` (same index, stale recorded
+        // offset) must be rejected rather than silently rolling back to B's
+        // position under A's name.
+        let result = arena.rollback(handle_a);
+        assert!(matches!(result, Err(ArenaError::InvalidCheckpoint(_))));
     }
 
     #[test]

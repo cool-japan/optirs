@@ -3,11 +3,14 @@
 // This module provides comprehensive adaptive streaming optimization for ML workloads.
 
 pub mod anomaly_detection;
+pub mod anomaly_ensemble;
 pub mod anomaly_ml;
+pub mod anomaly_scoring;
 pub mod anomaly_statistical;
 pub mod buffering;
 pub mod config;
 pub mod drift_detection;
+pub mod drift_models;
 pub mod drift_tests;
 pub mod meta_bandit;
 pub mod meta_learning;
@@ -20,11 +23,12 @@ pub mod statistics;
 #[cfg(test)]
 mod config_wiring_tests;
 
-// NOTE: `anomaly_ml`, `anomaly_statistical`, `drift_tests`, `meta_bandit`
-// and `statistics` are deliberately NOT glob-re-exported. The glob exports below already
-// collide across modules (see the aliased re-exports further down), and
-// adding four more globs would reintroduce ambiguous names for every
-// downstream consumer. Reach for them through their module path instead.
+// NOTE: `anomaly_ensemble`, `anomaly_ml`, `anomaly_scoring`,
+// `anomaly_statistical`, `drift_models`, `drift_tests`, `meta_bandit` and
+// `statistics` are deliberately NOT glob-re-exported. The glob exports below
+// already collide across modules (see the aliased re-exports further down), and
+// adding more globs would reintroduce ambiguous names for every downstream
+// consumer. Reach for them through their module path instead.
 
 // Selective exports to avoid import conflicts
 pub use buffering::*;

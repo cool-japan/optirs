@@ -11,7 +11,7 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::architecture_knowledge_graph::{
 //!     ArchitectureKnowledgeGraph, PerformanceRecord, RelationType,
 //! };

@@ -33,7 +33,7 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```
 //! use optirs_nas::few_shot_architecture::{
 //!     ArchitectureExample, FewShotAlgorithm, FewShotArchitectureOptimizer,
 //! };
@@ -73,14 +73,8 @@
 use crate::architecture_knowledge_graph::{ArchitectureKnowledgeGraph, NodeId, PerformanceRecord};
 use crate::error::{OptimError, Result};
 use scirs2_core::ndarray::{Array1, Array2};
-use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
 use serde::{Deserialize, Serialize};
-
-// Suppress unused-import warnings for re-exported helpers that downstream
-// callers may need but which are not all used by the implementations below.
-#[allow(unused_imports)]
-use std::collections::HashMap;
 
 /// A single labelled architecture example used as part of the support set.
 ///

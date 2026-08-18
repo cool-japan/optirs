@@ -115,7 +115,7 @@ fn sample_hyperparameter<T: Float>(
 
 /// Sample a fresh, genuinely random architecture: a random number of components
 /// drawn (with replacement) from [`OPTIMIZER_COMPONENT_VOCAB`], every
-/// hyperparameter in [`HYPERPARAMETER_SPECS`] drawn from its own range, and a
+/// hyperparameter in `HYPERPARAMETER_SPECS` drawn from its own range, and a
 /// chain of connections linking consecutive components.
 ///
 /// `id_prefix` distinguishes the origin of the architecture in logs and in the

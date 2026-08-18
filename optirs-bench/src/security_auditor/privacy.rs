@@ -121,11 +121,15 @@ impl PrivacyGuaranteesAnalyzer {
             expected_guarantee: PrivacyGuarantee::new(1.5, 1e-5, CompositionMethod::Optimal),
         });
 
-        // Secure multi-party computation test
+        // Secure multi-party computation test. Regression: this previously ran
+        // `attack_scenario: PropertyInference` -- mismatched with its own name and
+        // `MaxInformationLeakage` constraint -- so it silently exercised
+        // `test_property_inference` instead of `test_information_leakage`, which
+        // existed but had no scenario variant to be dispatched from at all.
         self.test_cases.push(PrivacyTest {
             name: "SMC Privacy Test".to_string(),
             mechanism: PrivacyMechanism::SecureMultiParty,
-            attack_scenario: PrivacyAttackScenario::PropertyInference,
+            attack_scenario: PrivacyAttackScenario::InformationLeakage,
             expected_guarantee: PrivacyGuarantee::new(0.1, 1e-8, CompositionMethod::Advanced)
                 .with_constraint(PrivacyConstraint::MaxInformationLeakage(0.01)),
         });
@@ -174,6 +178,9 @@ impl PrivacyGuaranteesAnalyzer {
             }
             PrivacyAttackScenario::NoiseReductionAttack => {
                 self.test_noise_reduction(test)?;
+            }
+            PrivacyAttackScenario::InformationLeakage => {
+                self.test_information_leakage(test)?;
             }
         }
 

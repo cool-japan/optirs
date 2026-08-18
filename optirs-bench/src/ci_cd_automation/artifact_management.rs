@@ -13,9 +13,12 @@ use std::time::{Duration, SystemTime};
 
 use super::config::{
     ArtifactDownloadConfig, ArtifactRetentionPolicy, ArtifactStorageConfig,
-    ArtifactStorageProvider, ArtifactUploadConfig, CompressionAlgorithm, EncryptionConfig,
-    ParallelUploadConfig,
+    ArtifactStorageProvider, ArtifactUploadConfig, CompressionAlgorithm,
 };
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use super::config::ParallelUploadConfig;
 
 /// Artifact manager for handling storage and retrieval
 #[derive(Debug)]
@@ -713,40 +716,27 @@ impl ArtifactManager {
             ArtifactStorageProvider::Local(path) => {
                 Box::new(LocalArtifactStorage::new(path.clone()))
             }
-            ArtifactStorageProvider::S3 {
-                bucket,
-                region,
-                prefix,
-            } => {
+            ArtifactStorageProvider::S3 { .. } => {
                 return Err(OptimError::InvalidConfig(
                     "S3 storage not yet implemented".to_string(),
                 ));
             }
-            ArtifactStorageProvider::GCS { bucket, prefix } => {
+            ArtifactStorageProvider::GCS { .. } => {
                 return Err(OptimError::InvalidConfig(
                     "GCS storage not yet implemented".to_string(),
                 ));
             }
-            ArtifactStorageProvider::AzureBlob {
-                account,
-                container,
-                prefix,
-            } => {
+            ArtifactStorageProvider::AzureBlob { .. } => {
                 return Err(OptimError::InvalidConfig(
                     "Azure Blob storage not yet implemented".to_string(),
                 ));
             }
-            ArtifactStorageProvider::FTP {
-                host,
-                port,
-                path,
-                secure,
-            } => {
+            ArtifactStorageProvider::FTP { .. } => {
                 return Err(OptimError::InvalidConfig(
                     "FTP storage not yet implemented".to_string(),
                 ));
             }
-            ArtifactStorageProvider::HTTP { base_url, auth } => {
+            ArtifactStorageProvider::HTTP { .. } => {
                 return Err(OptimError::InvalidConfig(
                     "HTTP storage not yet implemented".to_string(),
                 ));

@@ -7,7 +7,11 @@ use crate::ci_cd_automation::{CiCdAutomation, CiCdAutomationConfig};
 use crate::error::{OptimError, Result};
 use futures::stream::{self, StreamExt};
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
+// Only exercised by the unit tests below -- gated so a non-test build does not
+// warn about unused imports.
+#[cfg(test)]
+use std::time::Instant;
 
 use super::aggregator::ResultAggregator;
 use super::cloud::{
@@ -17,10 +21,8 @@ use super::cloud::{
 use super::config::*;
 use super::container::ContainerManager;
 use super::execution::{
-    extract_labelled_value, host_platform, is_windows_platform, parse_metrics_from_output,
-    parse_value_after, run_process, scale_bytes, scale_seconds, scale_throughput,
-    scenario_environment, shell_invocation, CommandOutcome, ExecutionTarget, ResolvedTarget,
-    SshAccess,
+    host_platform, is_windows_platform, parse_metrics_from_output, run_process,
+    scenario_environment, shell_invocation, ExecutionTarget, ResolvedTarget, SshAccess,
 };
 use super::matrix::TestMatrixGenerator;
 use super::resources::PlatformResourceManager;
@@ -119,7 +121,17 @@ impl CrossPlatformOrchestrator {
         let result_aggregator = ResultAggregator::new();
         let resource_manager = PlatformResourceManager::new(config.resource_limits.clone())?;
 
-        let ci_cd_integration = if let Some(ci_cd_config) = &config.ci_cd_config {
+        // NOTE: `config.ci_cd_config` (a `CiCdIntegrationConfig`: platform/settings/
+        // webhooks/status_checks) and `CiCdAutomationConfig` (enable_automation/
+        // platform/test_execution/baseline_management/reporting/artifact_storage/
+        // integrations/performance_gates) are different, non-isomorphic schemas with
+        // no lossless field-for-field mapping; only `platform` lines up directly.
+        // Deriving a faithful `CiCdAutomationConfig` from the lighter integration
+        // config is a real design task, not a mechanical conversion, so it is left
+        // as a tracked gap rather than invented here: CI/CD automation is enabled
+        // with defaults whenever integration is requested, but does not yet inherit
+        // the caller's declared platform/webhooks/status-check settings.
+        let ci_cd_integration = if config.ci_cd_config.is_some() {
             Some(CiCdAutomation::new(CiCdAutomationConfig::default())?)
         } else {
             None
@@ -134,6 +146,23 @@ impl CrossPlatformOrchestrator {
             resource_manager,
             ci_cd_integration,
         })
+    }
+
+    /// The configured CI/CD automation engine, if `OrchestratorConfig::ci_cd_config`
+    /// requested one. `execute_cross_platform_testing` does not drive this itself —
+    /// `CiCdAutomation::execute_automation` needs a `TriggerEvent` (push/PR/release/
+    /// schedule/manual/api/webhook) that only the surrounding CI environment knows,
+    /// not something this orchestrator can infer — so callers that do know the
+    /// trigger use this accessor to run it explicitly.
+    pub fn ci_cd_automation(&self) -> Option<&CiCdAutomation> {
+        self.ci_cd_integration.as_ref()
+    }
+
+    /// Mutable access to the configured CI/CD automation engine; see
+    /// [`Self::ci_cd_automation`]. `CiCdAutomation::execute_automation` takes
+    /// `&mut self`, so callers driving it need this rather than the shared accessor.
+    pub fn ci_cd_automation_mut(&mut self) -> Option<&mut CiCdAutomation> {
+        self.ci_cd_integration.as_mut()
     }
 
     /// Execute comprehensive cross-platform testing
@@ -208,6 +237,8 @@ impl CrossPlatformOrchestrator {
             TestStatus::Skipped // Mixed results
         };
 
+        let issues_summary = self.generate_issues_summary(&results);
+
         let summary = CrossPlatformTestingSummary {
             total_platforms,
             successful_platforms,
@@ -215,6 +246,10 @@ impl CrossPlatformOrchestrator {
             platform_results,
             overall_status,
             execution_time: self.resource_manager.get_total_execution_time(),
+            performance_comparisons,
+            trends,
+            recommendations,
+            issues_summary,
         };
 
         log::info!("✅ Cross-platform testing completed!");
@@ -330,17 +365,37 @@ impl CrossPlatformOrchestrator {
                     }
                 }
             } else {
-                // Local testing
-                let allocation = ResourceAllocation {
-                    id: allocation_id.clone(),
-                    platform: entry.platform.clone(),
-                    resource_type: AllocatedResourceType::Local,
-                    allocated_at: SystemTime::now(),
-                    estimated_completion: SystemTime::now() + entry.estimated_duration,
-                    status: AllocationStatus::Available,
-                    usage: ResourceUsage::default(),
-                };
-                allocations.insert(allocation_id, allocation);
+                // Local testing. Mirror the cloud/container branches above: an
+                // entry that declares a hard requirement (GPU, network) the local
+                // host cannot actually satisfy is skipped with a warning instead
+                // of being silently allocated and left to fail its own scenarios
+                // later with a more confusing error.
+                let needs_gpu = entry.resource_requirements.contains_key(&ResourceType::GPU);
+                let needs_network = entry
+                    .resource_requirements
+                    .contains_key(&ResourceType::Network);
+                if needs_gpu && !super::resources::gpu_available() {
+                    log::warn!(
+                        "skipping platform {}: entry requires a GPU and none was detected locally",
+                        platform_target_to_string(&entry.platform)
+                    );
+                } else if needs_network && !super::resources::network_available() {
+                    log::warn!(
+                        "skipping platform {}: entry requires network access and none was detected locally",
+                        platform_target_to_string(&entry.platform)
+                    );
+                } else {
+                    let allocation = ResourceAllocation {
+                        id: allocation_id.clone(),
+                        platform: entry.platform.clone(),
+                        resource_type: AllocatedResourceType::Local,
+                        allocated_at: SystemTime::now(),
+                        estimated_completion: SystemTime::now() + entry.estimated_duration,
+                        status: AllocationStatus::Available,
+                        usage: ResourceUsage::default(),
+                    };
+                    allocations.insert(allocation_id, allocation);
+                }
             }
         }
 
@@ -827,6 +882,13 @@ impl CrossPlatformOrchestrator {
             );
 
             let outcome = run_process(&program, &args, &envs, *timeout).await?;
+            log::debug!(
+                "scenario '{}' ran `{}` in {:?} (exit: {:?})",
+                scenario_name,
+                outcome.command_line,
+                outcome.duration,
+                outcome.exit_code
+            );
             executed += 1;
             aggregated_stdout.push_str(&outcome.stdout);
             aggregated_stderr.push_str(&outcome.stderr);
@@ -901,8 +963,14 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Find cloud provider for platform
-    fn find_provider_for_platform(&self, platform: &PlatformTarget) -> Option<&CloudProviderEnum> {
-        // Simple provider selection logic
+    // NOTE: `platform` is intentionally unused. None of the provider config structs
+    // (AwsConfig/AzureConfig/GcpConfig/GitHubActionsConfig) declare which
+    // `PlatformTarget`s they support, so there is no configured data to match
+    // against; a real per-platform selection would mean inventing a provider ->
+    // platform capability matrix rather than wiring existing data through. Tracked
+    // as a gap; for now the first configured provider is used and
+    // `provision_instance` is trusted to reject platforms it cannot serve.
+    fn find_provider_for_platform(&self, _platform: &PlatformTarget) -> Option<&CloudProviderEnum> {
         self.cloud_providers.first()
     }
 
@@ -1026,10 +1094,18 @@ impl CrossPlatformOrchestrator {
     }
 
     /// Generate recommendations
+    // NOTE: `results` is intentionally unused today. Recommendations are derived
+    // solely from `compatibility.platform_scores`; folding raw pass/fail counts in
+    // too (e.g. flagging a platform whose tests fail outright even when its score
+    // stays above the 80% threshold below) needs a `RecommendationType` variant
+    // that fits "test failure" — none of the existing ones
+    // (Optimization/Configuration/FeatureEnablement/PlatformSpecificImplementation/
+    // PerformanceTuning) do — so this is left as a tracked gap rather than an
+    // invented mapping.
     async fn generate_recommendations(
         &self,
         compatibility: &CompatibilityAnalysis,
-        results: &[TestResult],
+        _results: &[TestResult],
     ) -> Result<Vec<PlatformRecommendation>> {
         let mut recommendations = Vec::new();
 

@@ -6,7 +6,7 @@
 
 use crate::error::{OptimError, Result};
 use crate::performance_regression_detector::{
-    EnvironmentInfo, MetricType, MetricValue, PerformanceMeasurement, TestConfiguration,
+    EnvironmentInfo, MetricValue, PerformanceMeasurement, TestConfiguration,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

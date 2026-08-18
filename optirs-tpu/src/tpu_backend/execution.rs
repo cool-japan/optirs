@@ -78,6 +78,16 @@ impl<T: Float + Debug + Send + Sync + 'static> ExecutionEngine<T> {
     /// evaluation over the input tensors, because a bare `ComputationId`
     /// reached this far with no operation list attached -- it now runs the real
     /// program.
+    ///
+    /// # Devices are not consulted
+    ///
+    /// `devices` is deliberately unused: evaluation happens on the CPU, so the
+    /// selected devices affect admission control, placement and accounting --
+    /// not the arithmetic. Sharding a computation across the device set would
+    /// mean partitioning the graph and reducing across the partitions, which
+    /// this reference executor does not do and does not pretend to. The
+    /// parameter is kept because the memory reserved on those devices is what
+    /// `memory_allocation` describes, and a real backend would need it here.
     pub fn execute_task(
         &self,
         task: ComputationTask,

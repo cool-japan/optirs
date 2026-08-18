@@ -1,10 +1,15 @@
-//! Hypervolume indicator: exact/bounded-approximate computation (F17) plus the pluggable HypervolumeCalculator/HypervolumeMethod scaffolding used by SmsEmoa.
+//! Hypervolume indicator: exact and bounded-approximate computation (F17), plus
+//! the pluggable [`HypervolumeCalculator`] / [`HypervolumeMethod`] front end.
+//!
+//! The calculator is used directly by [`super::nsga2`], [`super::nsga3`] and
+//! [`super::moead`] to derive the `convergence` front metric. (It previously
+//! also backed an `SmsEmoa` struct that had no constructor and no methods; that
+//! type is gone, the calculator is not.)
 
 use crate::error::{OptimError, Result};
 use crate::nas_engine::OptimizationDirection;
 use scirs2_core::numeric::Float;
 use scirs2_core::random::Random;
-use scirs2_core::RngExt;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -45,7 +50,7 @@ pub enum HypervolumeMethod {
     /// Monte Carlo estimation by uniform sampling of the reference box.
     ///
     /// This is a genuine estimator (not a fallback to the exact routine): it
-    /// draws [`HypervolumeCalculator::monte_carlo_samples`] uniform points from
+    /// draws `HypervolumeCalculator::monte_carlo_samples` uniform points from
     /// the box spanned by the front's ideal corner and the reference point and
     /// returns `box_volume * dominated_fraction`. Use it only when an
     /// approximation is acceptable; it is seeded, so repeated calls on the same
@@ -222,7 +227,7 @@ fn negate_maximized<T: Float>(values: &[T], directions: &[OptimizationDirection]
 }
 
 /// Map a whole front into the pure-minimization convention (see
-/// [`negate_maximized`]).
+/// `negate_maximized`).
 pub fn normalize_front_for_minimization<T: Float>(
     front: &[Vec<T>],
     directions: &[OptimizationDirection],
@@ -234,7 +239,7 @@ pub fn normalize_front_for_minimization<T: Float>(
 }
 
 /// Map a reference point into the pure-minimization convention (see
-/// [`negate_maximized`]).
+/// `negate_maximized`).
 ///
 /// The transform is its own inverse (negating the same entries twice restores the
 /// original), so the same call converts a minimization-space reference back into
