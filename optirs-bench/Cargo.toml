@@ -8,7 +8,7 @@ readme = "README.md"
 license.workspace = true
 repository.workspace = true
 keywords = ["benchmarking", "profiling", "performance", "regression", "monitoring"]
-categories = ["development-tools", "development-tools::profiling", "development-tools::testing"]
+categories = ["development-tools::profiling", "development-tools::testing"]
 # Explicit binary list only: src/bin/*.rs is NOT auto-discovered, so every
 # intended binary must have a matching [[bin]] entry below.
 autobins = false
