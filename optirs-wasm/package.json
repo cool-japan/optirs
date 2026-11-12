@@ -29,7 +29,7 @@
     "learning-rate-scheduler",
     "rust"
   ],
-  "author": "COOLJAPAN OU (Team Kitasan)",
+  "author": "COOLJAPAN OU (Team KitaSan)",
   "license": "Apache-2.0",
   "files": [
     "pkg/",

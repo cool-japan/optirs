@@ -426,7 +426,7 @@ Contributions are welcome. Before submitting:
 
 ## Sponsorship
 
-OptiRS is developed and maintained by **COOLJAPAN OU (Team Kitasan)**.
+OptiRS is developed and maintained by **COOLJAPAN OU (Team KitaSan)**.
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github)](https://github.com/sponsors/cool-japan)
 

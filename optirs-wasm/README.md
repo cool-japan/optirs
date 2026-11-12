@@ -306,4 +306,4 @@ wasm-pack test --node --features webgpu    # or: npm run test:webgpu
 
 Apache-2.0
 
-Copyright (c) 2026 COOLJAPAN OU (Team Kitasan)
+Copyright (c) 2026 COOLJAPAN OU (Team KitaSan)

@@ -656,7 +656,7 @@ Legend: ✅ Production Ready | 🚧 In Development | 🔬 Research Phase | ❌ N
 
 ### Contributors
 
-- COOLJAPAN OU (Team Kitasan)
+- COOLJAPAN OU (Team KitaSan)
 - SciRS2 Integration Team
 - Rust ML Community
 
